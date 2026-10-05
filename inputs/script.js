@@ -5814,6 +5814,8 @@ var text = string2().trim().min(1);
 var relativePath = text.refine((value) => !value.startsWith("/") && !value.includes("\\") && !value.split("/").some((part) => part === ".." || part === ".git" || part === "") && !value.includes("\x00"), "must be a safe tree-relative path");
 var argv = array(string2().refine((value) => !value.includes("\x00"), "NUL is not allowed")).min(1).refine((value) => /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(value[0]), "command must be a PATH executable, not a shell expression or absolute path");
 var command = object({ argv, cwd: relativePath.default(".") }).strict();
+var reservedEnv = /^(?:PATH|HOME|TMPDIR|CI|LC_ALL|TZ|(?:HOS|MISE|XDG|BUN|NPM_CONFIG|YARN|PNPM)_.*)$/;
+var stepEnv = record(string2().regex(/^[A-Z][A-Z0-9_]*$/, "env names are upper-case").refine((name) => !reservedEnv.test(name), "the runner owns this variable"), string2().refine((value) => !value.includes("\x00"), "NUL is not allowed"));
 var artifact = object({
   id: text,
   path: relativePath,
@@ -5841,7 +5843,7 @@ var platform = object({
   runner: runner.optional(),
   toolchain: record(text, text).refine((value) => Object.keys(value).length > 0, "toolchain is required"),
   dependencies: array(dependency).min(1),
-  steps: array(command.extend({ id: text, series: literal(true).optional() }).strict()).min(1),
+  steps: array(command.extend({ id: text, series: literal(true).optional(), env: stepEnv.optional() }).strict()).min(1),
   artifacts: array(artifact).min(1)
 }).strict();
 var gateTest = command.extend({
@@ -6325,7 +6327,7 @@ async function runBuild(input) {
       }
       if (gate && (guarded.missing.has(step.argv[0]) || !Bun.which(step.argv[0], { PATH: env.PATH })))
         return { code: 127, stdout: "", stderr: `command is not in the declared toolchain: ${step.argv[0]}`, unavailable: "command" };
-      const result = await execute({ argv: step.argv, cwd, env, network, snapshot: request.snapshot });
+      const result = await execute({ argv: step.argv, cwd, env: step.env ? { ...step.env, ...env } : env, network, snapshot: request.snapshot });
       if (existsSync3(guarded.violation))
         throw new BuildProblem({ verdict: "fail", reason: "frozen-lockfile", detail: `step ${step.argv.join(" ")} was refused: ${readFileSync2(guarded.violation, "utf8").trim().slice(0, 500)}` });
       for (const [path, before] of locks.get(tree) ?? [])
