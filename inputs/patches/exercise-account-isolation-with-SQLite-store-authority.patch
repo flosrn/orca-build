@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: exercise account isolation with SQLite store authority
+
+Carried-Because: The imported two-account restart smoke must exercise the current writable Store authority rather than bypassing it.
+Tests: src/main/claude-accounts/host-account-isolation-smoke.test.ts
+
+diff --git a/src/main/claude-accounts/host-account-isolation-smoke.test.ts b/src/main/claude-accounts/host-account-isolation-smoke.test.ts
+index 276d1bd814cc9f75bd15b3221ec2c6aa76cdeed7..20f8f9863d3f913d99b82c93887621303c63ec4e 100644
+--- a/src/main/claude-accounts/host-account-isolation-smoke.test.ts
++++ b/src/main/claude-accounts/host-account-isolation-smoke.test.ts
+@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
+ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { installFakeAppEnvironment } from '../../../config/scripts/vitest-host-ports-setup'
++import { closeTestStores, createSqliteTestStore } from '../persistence-test-harness'
+ import { Store } from '../persistence/loading-store/store'
+ import { initDataPath } from '../persistence/loading-store/user-data-path'
+ import type { ClaudeLivePtyBinding } from './live-pty-gate'
+@@ -185,8 +186,12 @@ describe('Claude host account isolation smoke', () => {
+     resetRuntimeAuthTestState()
+   })
+ 
+-  afterEach(() => {
+-    cleanupRuntimeAuthTestState()
++  afterEach(async () => {
++    try {
++      await closeTestStores()
++    } finally {
++      cleanupRuntimeAuthTestState()
++    }
+   })
+ 
+   it('keeps two live accounts, a rotation and a restart inside their own surfaces', async () => {
+@@ -206,7 +211,7 @@ describe('Claude host account isolation smoke', () => {
+     installFakeAppEnvironment({ getPath: () => testState.userDataDir })
+     initDataPath()
+     const dataFile = join(testState.userDataDir, 'orca-data.json')
+-    const store = new Store({ dataFile })
++    const store = createSqliteTestStore(Store, { dataFile })
+     store.updateSettings({
+       claudeManagedAccounts: [
+         createClaudeAccount('account-a', pathA, { email: 'a@example.com' }),
+@@ -293,8 +298,9 @@ describe('Claude host account isolation smoke', () => {
+ 
+       // ── Restart: both children survive it, the way daemon sessions do. ──
+       store.flush()
++      await closeTestStores()
+       vi.resetModules()
+-      const reloaded = new Store({ dataFile })
++      const reloaded = createSqliteTestStore(Store, { dataFile })
+ 
+       // The binding came off disk, not out of the previous process's memory.
+       expect(reloaded.getClaudeLivePtyBindings()).toEqual([

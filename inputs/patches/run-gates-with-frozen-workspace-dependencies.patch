@@ -1,0 +1,214 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: run gates with frozen workspace dependencies
+
+Carried-Because: Confined builds must not invoke package-manager resolution while running tools.
+Tests: config/scripts/ensure-native-runtime.test.mjs; meter spec and all declared HarnessOS gates.
+
+diff --git a/config/scripts/ensure-native-runtime.mjs b/config/scripts/ensure-native-runtime.mjs
+index c93b6a19d6214cab3f5903cade8b1052a8c9637d..ef8cea7e1b8a07d4f3553e0cc4e7285ea688a250 100644
+--- a/config/scripts/ensure-native-runtime.mjs
++++ b/config/scripts/ensure-native-runtime.mjs
+@@ -400,29 +400,23 @@ function rebuildNodeRuntimeModules(moduleNames) {
+       moduleDir = realpathSync(moduleDir)
+     }
+     console.warn(`[native-runtime] Rebuilding ${moduleName} with node-gyp.`)
+-    runPnpm(['exec', 'node-gyp', 'rebuild'], { cwd: moduleDir })
++    rebuildWithNodeGyp(moduleDir)
+     if (moduleName === 'node-pty' && process.platform === 'win32') {
+       runNodeScript([resolve(moduleDir, 'scripts', 'post-install.js')])
+     }
+   }
+ }
+ 
+-function runPnpm(args, { cwd = projectDir } = {}) {
+-  // cmd.exe resolves both Corepack's pnpm.cmd and pnpm 12's native pnpm.exe.
+-  const command = 'pnpm'
+-  const env =
+-    process.platform === 'linux' && args.includes('node-gyp')
+-      ? { ...process.env, CXXFLAGS: `${process.env.CXXFLAGS ?? ''} -std=gnu++2a`.trim() }
+-      : process.env
+-  const result = spawnSync(command, args, {
+-    cwd,
+-    stdio: 'inherit',
+-    shell: process.platform === 'win32',
+-    env
+-  })
++function rebuildWithNodeGyp(cwd) {
++  // Resolve only the frozen workspace dependency, never a package-manager download.
++  const args = [require.resolve('node-gyp/bin/node-gyp.js'), 'rebuild']
++  const env = process.platform === 'linux'
++    ? { ...process.env, CXXFLAGS: `${process.env.CXXFLAGS ?? ''} -std=gnu++2a`.trim() }
++    : process.env
++  const result = spawnSync(process.execPath, args, { cwd, stdio: 'inherit', env })
+ 
+   if (result.error || result.status !== 0) {
+-    console.error(`[native-runtime] ${command} ${args.join(' ')} failed in ${cwd}.`)
++    console.error(`[native-runtime] node-gyp rebuild failed in ${cwd}.`)
+     if (result.error) {
+       console.error(formatError(result.error))
+     }
+diff --git a/config/scripts/ensure-native-runtime.test.mjs b/config/scripts/ensure-native-runtime.test.mjs
+index 47fe435edccbc2d7ab1d8f55cf9762a5e6cfacdc..fbb0d1b24641a7c6fec36d2d78df0064998fd1b4 100644
+--- a/config/scripts/ensure-native-runtime.test.mjs
++++ b/config/scripts/ensure-native-runtime.test.mjs
+@@ -1,6 +1,5 @@
+ import { spawnSync } from 'node:child_process'
+ import {
+-  chmodSync,
+   copyFileSync,
+   mkdirSync,
+   mkdtempSync,
+@@ -9,7 +8,7 @@ import {
+   writeFileSync
+ } from 'node:fs'
+ import { tmpdir } from 'node:os'
+-import { delimiter, join } from 'node:path'
++import { delimiter, dirname, join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import { describe, expect, it } from 'vitest'
+ import { copyScriptWithLocalModules } from './script-module-dependencies.mjs'
+@@ -33,7 +32,7 @@ describe('ensure-native-runtime', () => {
+       const binDir = join(projectDir, 'bin')
+       writeFakeNativeModules(projectDir)
+       writeNodePtyPatchFile(projectDir)
+-      writeFakePnpm(binDir)
++      writeFakeNodeGyp(binDir)
+ 
+       const result = spawnSync(process.execPath, [scriptPath, '--runtime=node'], {
+         cwd: projectDir,
+@@ -46,7 +45,6 @@ describe('ensure-native-runtime', () => {
+ 
+       expect(result.status, result.stderr).toBe(0)
+       const log = readFileSync(logPath, 'utf8')
+-      expect(log).toContain('pnpm exec node-gyp rebuild\n')
+       expect(log).toContain(join('node_modules', 'node-pty'))
+       if (process.platform === 'linux') {
+         expect(log).toMatch(/^cxxflags=(?:.*\s)?-std=gnu\+\+2a$/m)
+@@ -72,7 +70,7 @@ describe('ensure-native-runtime', () => {
+         const binDir = join(projectDir, 'bin')
+         writeFakeNativeModules(projectDir, { windowsRegistryRequiresMarker: true })
+         writeNodePtyPatchFile(projectDir)
+-        writeFakePnpm(binDir)
++        writeFakeNodeGyp(binDir)
+ 
+         const result = spawnSync(process.execPath, [scriptPath, '--runtime=node'], {
+           cwd: projectDir,
+@@ -85,7 +83,6 @@ describe('ensure-native-runtime', () => {
+ 
+         expect(result.status, result.stderr).toBe(0)
+         const log = readFileSync(logPath, 'utf8')
+-        expect(log.match(/pnpm exec node-gyp rebuild\n/g)).toHaveLength(2)
+         expect(log).toContain(join('node_modules', 'node-pty'))
+         expect(log).toContain(join('node_modules', '@orca', 'windows-registry'))
+       } finally {
+@@ -106,7 +103,7 @@ describe('ensure-native-runtime', () => {
+         const binDir = join(projectDir, 'bin')
+         writeLoadableNativeModules(projectDir)
+         writeNodePtyPatchFile(projectDir)
+-        writeFakePnpm(binDir)
++        writeFakeNodeGyp(binDir)
+ 
+         const result = spawnSync(process.execPath, [scriptPath, '--runtime=node'], {
+           cwd: projectDir,
+@@ -121,7 +118,7 @@ describe('ensure-native-runtime', () => {
+         expect(result.stderr).toContain(
+           'Patched node-pty build artifacts are missing; rebuilding native deps.'
+         )
+-        expect(readFileSync(logPath, 'utf8')).toContain('pnpm exec node-gyp rebuild\n')
++        expect(readFileSync(markerPath, 'utf8')).toBe('rebuilt')
+       } finally {
+         rmSync(projectDir, { recursive: true, force: true })
+       }
+@@ -141,7 +138,7 @@ describe('ensure-native-runtime', () => {
+         writeLoadableNativeModules(projectDir)
+         writeNodePtyPatchFile(projectDir)
+         writePatchedNodePtyBuildArtifacts(projectDir)
+-        writeFakePnpm(binDir)
++        writeFakeNodeGyp(binDir)
+ 
+         const result = spawnSync(process.execPath, [scriptPath, '--runtime=node'], {
+           cwd: projectDir,
+@@ -154,7 +151,7 @@ describe('ensure-native-runtime', () => {
+ 
+         expect(result.status, result.stderr).toBe(0)
+         expect(result.stderr).toContain("expected build/Release so Orca's node-pty patch is active")
+-        expect(readFileSync(logPath, 'utf8')).toContain('pnpm exec node-gyp rebuild\n')
++        expect(readFileSync(markerPath, 'utf8')).toBe('rebuilt')
+       } finally {
+         rmSync(projectDir, { recursive: true, force: true })
+       }
+@@ -174,7 +171,7 @@ describe('ensure-native-runtime', () => {
+         writeLoadableNativeModules(projectDir, { nativeDir: '../build/Release/' })
+         writeNodePtyPatchFile(projectDir)
+         writePatchedNodePtyBuildArtifacts(projectDir)
+-        writeFakePnpm(binDir)
++        writeFakeNodeGyp(binDir)
+ 
+         const result = spawnSync(process.execPath, [scriptPath, '--runtime=node'], {
+           cwd: projectDir,
+@@ -187,7 +184,7 @@ describe('ensure-native-runtime', () => {
+ 
+         expect(result.status, result.stderr).toBe(0)
+         expect(result.stderr).not.toContain('Patched node-pty build artifacts are missing')
+-        expect(readFileSync(logPath, 'utf8')).not.toContain('pnpm exec node-gyp rebuild')
++        expect(readFileSync(logPath, 'utf8')).not.toContain('cwd=')
+       } finally {
+         rmSync(projectDir, { recursive: true, force: true })
+       }
+@@ -338,15 +335,16 @@ function writePatchedNodePtyBuildArtifacts(projectDir) {
+   }
+ }
+ 
+-function writeFakePnpm(binDir) {
++function writeFakeNodeGyp(binDir) {
+   mkdirSync(binDir, { recursive: true })
+-  const shimPath = join(binDir, 'pnpm-shim.cjs')
++  const moduleDir = join(dirname(binDir), 'node_modules', 'node-gyp', 'bin')
++  mkdirSync(moduleDir, { recursive: true })
++  const shimPath = join(moduleDir, 'node-gyp.js')
+   writeFileSync(
+     shimPath,
+     `
+ const { appendFileSync, writeFileSync } = require('node:fs')
+ 
+-appendFileSync(process.env.ORCA_NATIVE_TEST_LOG, \`pnpm \${process.argv.slice(2).join(' ')}\\n\`)
+ appendFileSync(process.env.ORCA_NATIVE_TEST_LOG, \`cwd=\${process.cwd()}\\n\`)
+ appendFileSync(
+   process.env.ORCA_NATIVE_TEST_LOG,
+@@ -359,12 +357,4 @@ appendFileSync(
+ writeFileSync(process.env.ORCA_NATIVE_TEST_MARKER, 'rebuilt')
+ `
+   )
+-
+-  const posixPnpmPath = join(binDir, 'pnpm')
+-  writeFileSync(posixPnpmPath, `#!/usr/bin/env node\nrequire(${JSON.stringify(shimPath)})\n`)
+-  chmodSync(posixPnpmPath, 0o755)
+-  writeFileSync(
+-    join(binDir, 'pnpm.cmd'),
+-    `@echo off\r\n"${process.execPath}" "%~dp0\\pnpm-shim.cjs" %*\r\n`
+-  )
+ }
+diff --git a/tests/e2e/global-setup.ts b/tests/e2e/global-setup.ts
+index cd5d9b3c4e0bc1a0fdf37e64e84e8ddd5521aee5..99b1e335ea76ae441ceebe8ec62532270de3bf5c 100644
+--- a/tests/e2e/global-setup.ts
++++ b/tests/e2e/global-setup.ts
+@@ -10,7 +10,7 @@
+  * temp file so the worker fixture can pick it up at runtime.
+  */
+ 
+-import { execSync } from 'node:child_process'
++import { execFileSync, execSync } from 'node:child_process'
+ import { randomUUID } from 'node:crypto'
+ import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+ import path from 'node:path'
+@@ -42,7 +42,7 @@ export default function globalSetup(): void {
+     // Why: --mode e2e is the build-time signal that exposes window.__store;
+     // the explicit env var keeps older local overrides working too.
+     console.error('[e2e] Building Electron app with electron-vite build --mode e2e...')
+-    execSync('npx electron-vite build --mode e2e', {
++    execFileSync(process.execPath, ['node_modules/electron-vite/bin/electron-vite.js', 'build', '--mode', 'e2e'], {
+       env: { ...process.env, VITE_EXPOSE_STORE: 'true' },
+       cwd: root,
+       stdio: 'inherit',

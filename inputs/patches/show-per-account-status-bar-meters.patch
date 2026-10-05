@@ -1,0 +1,4112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: show per account status bar meters
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Tests: Declared unit and integration gates in components/orca/build.toml.
+
+diff --git a/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs b/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs
+index 6df117983c1b4800cd7b3f491134e50334bb443e..ed144a2fd5ef04ae46000d3856b32a5f6059bfce 100644
+--- a/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs
++++ b/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs
+@@ -22,6 +22,8 @@ const STATUS_BAR_PROVIDERS = [
+   ['auto.components.status.bar.StatusBar.5e59007df4', 'Kimi'],
+   ['auto.components.status.bar.StatusBar.3bbf140864', 'MiniMax'],
+   ['auto.components.status.bar.StatusBar.grokUsageMenu', 'Grok'],
++  ['auto.components.status.bar.StatusBar.cursorUsageMenu', 'Cursor'],
++  ['auto.components.status.bar.StatusBar.qwenCloudUsageMenu', 'Qwen Cloud'],
+   ['auto.components.settings.accounts.search.f4a8c2e1b7', 'Grok (xAI)']
+ ]
+ 
+diff --git a/config/scripts/locale-value-overrides.mjs b/config/scripts/locale-value-overrides.mjs
+index 0887cf2e434d9840782ac02cb9725c6c6e0efc08..37d80feeb00aa490038322f069128101a20f7241 100644
+--- a/config/scripts/locale-value-overrides.mjs
++++ b/config/scripts/locale-value-overrides.mjs
+@@ -215,6 +215,8 @@ export const LOCALE_VALUE_OVERRIDES = {
+     'MiniMax Usage': 'MiniMax 使用情况',
+     'Grok Usage': 'Grok 使用情况',
+     'Grok (xAI) Usage': 'Grok (xAI) 使用情况',
++    'Cursor Usage': 'Cursor 使用情况',
++    'Qwen Cloud Usage': 'Qwen Cloud 使用情况',
+     'Force Delete Branch': '强制删除分支',
+     'Time agents worked': '代理工作时间',
+     PR: 'PR',
+diff --git a/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx b/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx
+index 03c7912a77228411693addaf8e0a90723e3092a9..9d683761db9e45f48735b9c4b5c2c685c909d7c4 100644
+--- a/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx
++++ b/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx
+@@ -54,7 +54,8 @@ function recordStatusBarToggleInteraction(
+     id === 'antigravity' ||
+     id === 'minimax' ||
+     id === 'grok' ||
+-    id === 'cursor'
++    id === 'cursor' ||
++    id === 'qwencloud'
+   ) {
+     recordFeatureInteraction('usage-tracking')
+   }
+diff --git a/src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts b/src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..df15a23c6c3201c085737b5a04f4206faee82ddc
+--- /dev/null
++++ b/src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts
+@@ -0,0 +1,57 @@
++import type { StatusBarItem } from '../../../../shared/ui-chrome-types'
++import { translate } from '@/i18n/i18n'
++import { translateSearchKeyword } from './settings-search-keywords'
++
++export type StatusBarToggleSearchEntry = {
++  id: StatusBarItem
++  title: string
++  description: string
++  keywords: string[]
++  toggleDescription: string
++}
++
++// Extracted rather than inlined in appearance-status-bar-search.ts: that file sits at the
++// max-lines budget, and every provider here is metered by the one CodexBar CLI anyway.
++export function getCodexBarStatusBarToggleSearchEntries(): readonly StatusBarToggleSearchEntry[] {
++  const statusBarKeyword = translateSearchKeyword(
++    'auto.components.settings.appearance.search.896eb53fd4',
++    'status bar'
++  )
++  const usageKeyword = translateSearchKeyword(
++    'auto.components.settings.appearance.search.00a028f25f',
++    'usage'
++  )
++  const subscriptionKeyword = translateSearchKeyword(
++    'auto.components.settings.appearance.search.de586def95',
++    'subscription'
++  )
++  const codexbarKeyword = translateSearchKeyword(
++    'auto.components.settings.appearance.search.2cf90681da',
++    'codexbar'
++  )
++  return [
++    {
++      id: 'qwencloud',
++      title: translate('auto.components.settings.appearance.search.c5d3e29b74', 'Qwen Cloud Usage'),
++      description: translate(
++        'auto.components.settings.appearance.search.3da17692eb',
++        'Show Qwen Cloud subscription usage in the status bar.'
++      ),
++      keywords: [
++        ...statusBarKeyword,
++        ...translateSearchKeyword('auto.components.settings.appearance.search.4eb287a3fc', 'qwen'),
++        ...translateSearchKeyword(
++          'auto.components.settings.appearance.search.5fc398b40d',
++          'alibaba'
++        ),
++        ...usageKeyword,
++        ...subscriptionKeyword,
++        ...codexbarKeyword
++      ],
++      toggleDescription: translate(
++        'settings.appearance.statusBar.qwenCloudToggleDescription',
++        'Show Qwen Cloud subscription usage reported by the CodexBar CLI.'
++      )
++    }
++  ]
++}
+diff --git a/src/renderer/src/components/settings/appearance-status-bar-search.ts b/src/renderer/src/components/settings/appearance-status-bar-search.ts
+index 8a4d65f21fd15443c84615f70602f96548c705ff..7d18874e263388f2c8f21b111a5d589bfedb834d 100644
+--- a/src/renderer/src/components/settings/appearance-status-bar-search.ts
++++ b/src/renderer/src/components/settings/appearance-status-bar-search.ts
+@@ -1,20 +1,17 @@
+-import type { StatusBarItem } from '../../../../shared/ui-chrome-types'
+ import { createLocalizedCatalog } from '@/i18n/localized-catalog'
+ import { translate } from '@/i18n/i18n'
+ import { translateSearchKeyword } from './settings-search-keywords'
+ import { getAntigravityStatusBarToggleSearchEntry } from './appearance-status-bar-antigravity-toggle-search'
++import {
++  getCodexBarStatusBarToggleSearchEntries,
++  type StatusBarToggleSearchEntry
++} from './appearance-status-bar-codexbar-toggle-search'
+ import { getMiniMaxStatusBarToggleSearchEntry } from './appearance-status-bar-minimax-toggle-search'
+ import { getGrokStatusBarToggleSearchEntry } from './appearance-status-bar-grok-toggle-search'
+ import { getCursorStatusBarToggleSearchEntry } from './appearance-status-bar-cursor-toggle-search'
+ 
+ export const getStatusBarToggles = createLocalizedCatalog(
+-  (): readonly {
+-    id: StatusBarItem
+-    title: string
+-    description: string
+-    keywords: string[]
+-    toggleDescription: string
+-  }[] => [
++  (): readonly StatusBarToggleSearchEntry[] => [
+     {
+       id: 'claude',
+       title: translate('auto.components.settings.appearance.search.9dc15020d7', 'Claude Usage'),
+@@ -169,6 +166,7 @@ export const getStatusBarToggles = createLocalizedCatalog(
+     getMiniMaxStatusBarToggleSearchEntry(),
+     getGrokStatusBarToggleSearchEntry(),
+     getCursorStatusBarToggleSearchEntry(),
++    ...getCodexBarStatusBarToggleSearchEntries(),
+     {
+       id: 'ssh',
+       title: translate('auto.components.settings.appearance.search.57fb424c56', 'Remote Hosts'),
+diff --git a/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx b/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
+index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d2825355255d19c844 100644
+--- a/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
++++ b/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
+@@ -7,10 +7,13 @@ import {
+ } from '../../../../shared/usage-percentage-display'
+ import type { StatusBarUsageMode } from '../../../../shared/status-bar-usage-mode'
+ import { ProviderIcon, clampUsedPercent, getProviderUsageStatusLabel } from './tooltip'
+-import { getTightestUsageSection } from './UsageRosterPanel'
++import { getStatusBarUsageSection } from './UsageRosterPanel'
++import { isProviderRefreshFailing, isUsageWindowExpired } from './usage-stale-sample'
++import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
+ import { formatRateLimitWindowChipLabel } from '@/lib/window-label-formatter'
+ import { formatUsagePercentageLabel } from './usage-percentage-label'
+ import { translate } from '@/i18n/i18n'
++import type { UsageAccountBadge } from './usage-account-segments'
+ import { isCursorUsageBucket } from '../../../../shared/cursor-usage-buckets'
+ 
+ function MiniBar({
+@@ -37,16 +40,18 @@ function WindowLabel({
+   w,
+   label,
+   display,
+-  showLabel = true
++  showLabel = true,
++  expired = false
+ }: {
+   w: RateLimitWindow
+   label: string
+   display: UsagePercentageDisplay
+   showLabel?: boolean
++  expired?: boolean
+ }): React.JSX.Element {
+   return (
+-    <span className="tabular-nums">
+-      {formatUsagePercentageLabel(w.usedPercent, display)}
++    <span className="whitespace-nowrap tabular-nums">
++      {expired ? '—' : formatUsagePercentageLabel(w.usedPercent, display)}
+       {showLabel ? ` ${label}` : ''}
+     </span>
+   )
+@@ -57,11 +62,16 @@ function WindowLabel({
+ // and markup can't drift between the two.
+ export function ProviderLetterBadge({ p }: { p: ProviderRateLimits }): React.JSX.Element {
+   const hasData = Boolean(p.session || p.weekly || p.fableWeekly || p.monthly || p.buckets?.length)
++  // The dot is the whole message at this width, so a lane whose refresh is failing must not
++  // wear the same solid dot as one that just refreshed.
++  const dotClass = isProviderRefreshFailing(p)
++    ? 'bg-amber-500/70'
++    : hasData
++      ? 'bg-muted-foreground/60'
++      : 'bg-muted-foreground/30'
+   return (
+     <span className="inline-flex items-center gap-1 text-muted-foreground">
+-      <span
+-        className={`inline-block h-2 w-2 rounded-full ${hasData ? 'bg-muted-foreground/60' : 'bg-muted-foreground/30'}`}
+-      />
++      <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
+       {getProviderLetter(p.provider)}
+     </span>
+   )
+@@ -87,6 +97,8 @@ function getProviderLetter(provider: ProviderRateLimits['provider']): string {
+       return 'U'
+     case 'codex':
+       return 'X'
++    case 'qwencloud':
++      return 'Q'
+   }
+ }
+ 
+@@ -105,10 +117,12 @@ function isVisibleStatusBarBucket(name: string): boolean {
+ 
+ function VerboseProviderUsage({
+   p,
+-  display
++  display,
++  now
+ }: {
+   p: ProviderRateLimits
+   display: UsagePercentageDisplay
++  now: number
+ }): React.JSX.Element {
+   if (p.buckets && p.buckets.length > 0) {
+     const visibleBuckets = p.buckets.filter((bucket) => isVisibleStatusBarBucket(bucket.name))
+@@ -120,8 +134,11 @@ function VerboseProviderUsage({
+         {visibleBuckets.map((bucket, index) => (
+           <React.Fragment key={bucket.name}>
+             {index > 0 ? <span className="text-muted-foreground">·</span> : null}
+-            <span className="tabular-nums">
+-              {bucket.name} {formatUsagePercentageLabel(bucket.usedPercent, display)}
++            <span className="whitespace-nowrap tabular-nums">
++              {bucket.name}{' '}
++              {isUsageWindowExpired(bucket, now)
++                ? '—'
++                : formatUsagePercentageLabel(bucket.usedPercent, display)}
+             </span>
+           </React.Fragment>
+         ))}
+@@ -130,6 +147,7 @@ function VerboseProviderUsage({
+             w={fallbackWindow}
+             label={formatRateLimitWindowChipLabel(fallbackWindow)}
+             display={display}
++            expired={isUsageWindowExpired(fallbackWindow, now)}
+           />
+         ) : null}
+       </>
+@@ -175,44 +193,92 @@ function VerboseProviderUsage({
+       {visibleWindows.map((window, index) => (
+         <React.Fragment key={window.key}>
+           {index > 0 ? <span className="text-muted-foreground">·</span> : null}
+-          <WindowLabel w={window.window} label={window.label} display={display} />
++          <WindowLabel
++            w={window.window}
++            label={window.label}
++            display={display}
++            expired={isUsageWindowExpired(window.window, now)}
++          />
+         </React.Fragment>
+       ))}
+     </>
+   )
+ }
+ 
++function ProviderAccountMark({
++  provider,
++  badge
++}: {
++  provider: ProviderRateLimits['provider']
++  badge: UsageAccountBadge | null
++}): React.JSX.Element {
++  if (!badge) {
++    return <ProviderIcon provider={provider} />
++  }
++  return (
++    <span
++      className="inline-flex items-center gap-1"
++      title={badge.email ?? undefined}
++      aria-label={badge.email ?? `${provider} ${badge.ordinal}`}
++    >
++      <ProviderIcon provider={provider} />
++      <span
++        className={
++          badge.isActive
++            ? 'text-[10px] font-semibold leading-none tabular-nums text-foreground/90'
++            : 'text-[10px] font-medium leading-none tabular-nums text-muted-foreground/60'
++        }
++      >
++        {badge.ordinal}
++      </span>
++    </span>
++  )
++}
++
+ export function ProviderSegment({
+   p,
+   compact,
+   display,
+-  mode = 'verbose'
++  mode = 'verbose',
++  badge = null
+ }: {
+   p: ProviderRateLimits | null
+   compact: boolean
+   display: UsagePercentageDisplay
+   mode?: StatusBarUsageMode
++  badge?: UsageAccountBadge | null
+ }): React.JSX.Element {
+   const provider = p?.provider ?? 'claude'
++  // Hooks run before the early returns below; the bar is always mounted, so without a
++  // boundary-scheduled clock an expired window would keep printing its old percentage
++  // until some unrelated provider push happened to re-render the surface.
++  const now = useResetCountdownClock([
++    p?.session?.resetsAt,
++    p?.weekly?.resetsAt,
++    p?.fableWeekly?.resetsAt,
++    p?.monthly?.resetsAt,
++    ...(p?.buckets ?? []).map((bucket) => bucket.resetsAt)
++  ])
++  const mark = <ProviderAccountMark provider={provider} badge={badge} />
+   const statusLabel = p ? getProviderUsageStatusLabel(p) : ''
+ 
+   // Idle / initial load
+   if (!p || p.status === 'idle') {
+     return (
+-      <span className="inline-flex items-center gap-1 text-muted-foreground">
+-        <ProviderIcon provider={provider} />
++      <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground">
++        {mark}
+         <span className="animate-pulse">···</span>
+       </span>
+     )
+   }
+ 
+-  const tightest = getTightestUsageSection(p)
++  const summary = getStatusBarUsageSection(p)
+ 
+   // Fetching with no prior data
+-  if (p.status === 'fetching' && !tightest) {
++  if (p.status === 'fetching' && !summary) {
+     return (
+-      <span className="inline-flex items-center gap-1 text-muted-foreground">
+-        <ProviderIcon provider={provider} />
++      <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground">
++        {mark}
+         <span className="animate-pulse">···</span>
+       </span>
+     )
+@@ -221,45 +287,58 @@ export function ProviderSegment({
+   // Unavailable (CLI not installed)
+   if (p.status === 'unavailable') {
+     return (
+-      <span className="inline-flex items-center gap-1 text-muted-foreground/50">
+-        <ProviderIcon provider={provider} /> --
++      <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground/50">
++        {mark} --
+       </span>
+     )
+   }
+ 
+   // Error with no data
+-  if (p.status === 'error' && !tightest) {
++  if (p.status === 'error' && !summary) {
+     return (
+-      <span className="inline-flex items-center gap-1 text-muted-foreground">
+-        <ProviderIcon provider={provider} />
+-        <AlertTriangle size={11} className="text-muted-foreground/80" />
+-        {!compact && <span className="text-[11px] font-medium">{statusLabel}</span>}
++      <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground">
++        {mark}
++        <AlertTriangle size={11} className="shrink-0 text-muted-foreground/80" />
++        {!compact && (
++          // Why: this copy is a localized sentence ("En attente du renouvellement des
++          // identifiants"), while the bar is a single 24px row shared by every lane. Bound it
++          // tightly so a dense French roster still fits; the hover title and the Usage popover
++          // row keep the sentence in full.
++          <span
++            className="min-w-0 max-w-[72px] truncate text-[11px] font-medium"
++            title={statusLabel}
++          >
++            {statusLabel}
++          </span>
++        )}
+       </span>
+     )
+   }
+ 
+-  // Has data (ok, fetching with stale data, or error with stale data)
+-  const isStale = p.status === 'error'
++  // Has data (ok, fetching with retained data, or error with retained data)
++  const isStale = isProviderRefreshFailing(p)
++  const summaryExpired = Boolean(summary && isUsageWindowExpired(summary.window, now))
+ 
+   return (
+-    <span className="inline-flex items-center gap-1.5">
+-      <ProviderIcon provider={provider} />
++    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
++      {mark}
+       {mode === 'verbose' ? (
+         <>
+-          {tightest && !compact ? (
+-            <MiniBar usedPct={clampUsedPercent(tightest.window.usedPercent)} display={display} />
++          {summary && !compact && !summaryExpired ? (
++            <MiniBar usedPct={clampUsedPercent(summary.window.usedPercent)} display={display} />
+           ) : null}
+-          <VerboseProviderUsage p={p} display={display} />
++          <VerboseProviderUsage p={p} display={display} now={now} />
+         </>
+-      ) : tightest ? (
++      ) : summary ? (
+         <WindowLabel
+-          w={tightest.window}
+-          label={tightest.label}
++          w={summary.window}
++          label={summary.label}
+           display={display}
+           showLabel={!compact}
++          expired={summaryExpired}
+         />
+       ) : null}
+-      {isStale && <AlertTriangle size={11} className="text-muted-foreground/80" />}
++      {isStale && <AlertTriangle size={11} className="shrink-0 text-muted-foreground/80" />}
+     </span>
+   )
+ }
+diff --git a/src/renderer/src/components/status-bar/StatusBarSurface.tsx b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
+index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b038ad6a39 100644
+--- a/src/renderer/src/components/status-bar/StatusBarSurface.tsx
++++ b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
+@@ -75,7 +75,7 @@ export function StatusBarSurface({
+     isEmptyUsageState,
+     isRefreshing,
+     petEnabled,
+-    rosterProviders,
++    usageBarSegments,
+     setMenuOpen,
+     setMenuPoint,
+     setStatusBarUsageMode,
+@@ -107,7 +107,7 @@ export function StatusBarSurface({
+         setMenuOpen(true)
+       }}
+     >
+-      <div className="flex items-center gap-3">
++      <div className="flex min-w-0 items-center gap-3">
+         {isEmptyUsageState ? (
+           showEmptyUsageCta ? (
+             <StatusBarUsageEmptyCta />
+@@ -123,22 +123,27 @@ export function StatusBarSurface({
+               <DropdownMenuTrigger asChild>
+                 <button
+                   type="button"
+-                  className="inline-flex items-center gap-3 rounded px-1 py-0.5 hover:bg-accent/70"
++                  className="inline-flex min-w-0 flex-nowrap items-center gap-3 whitespace-nowrap rounded px-1 py-0.5 hover:bg-accent/70"
+                   aria-label={translate(
+                     'auto.components.status.bar.UsageRosterPanel.title',
+                     'Usage'
+                   )}
+                 >
+-                  {rosterProviders.map((p) =>
++                  {usageBarSegments.map((segment) =>
+                     iconOnly ? (
+-                      // Narrow status bar: fall back to main's compact letter badge.
+-                      <span key={p.provider} title={getProviderDisplayName(p.provider)}>
+-                        <ProviderLetterBadge p={p} />
++                      <span
++                        key={segment.key}
++                        title={
++                          segment.badge?.email ?? getProviderDisplayName(segment.limits.provider)
++                        }
++                      >
++                        <ProviderLetterBadge p={segment.limits} />
+                       </span>
+                     ) : (
+                       <ProviderSegment
+-                        key={p.provider}
+-                        p={p}
++                        key={segment.key}
++                        p={segment.limits}
++                        badge={segment.badge}
+                         compact={compact}
+                         display={usagePercentageDisplay}
+                         mode={statusBarUsageMode}
+@@ -160,7 +165,7 @@ export function StatusBarSurface({
+                 onCloseAutoFocus={usageMenuFocusHandoff.onCloseAutoFocus}
+               >
+                 <UsageRosterPanel
+-                  providers={rosterProviders}
++                  segments={usageBarSegments}
+                   display={usagePercentageDisplay}
+                   statusBarUsageMode={statusBarUsageMode}
+                   onStatusBarUsageModeChange={setStatusBarUsageMode}
+@@ -171,10 +176,8 @@ export function StatusBarSurface({
+                   canSignIn={(provider) => getUsageProviderAccountsSectionId(provider) !== null}
+                   onManageAccounts={handleManageAccounts}
+                   onUsageDetails={handleUsageDetails}
+-                  renderRow={(p, rowNode) => {
+-                    // Every provider drills into its detail panel (parity with the
+-                    // per-provider dropdowns on main); Claude/Codex additionally get
+-                    // the account switcher + runtime toggle + Codex reset credits.
++                  renderRow={(segment, rowNode) => {
++                    const p = segment.limits
+                     if (p.provider === 'claude') {
+                       return (
+                         <ClaudeSwitcherMenu
+diff --git a/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx b/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
+index a2dab03d9c0905c204cc14d4b85c0ce0c135d36b..c6ab8b0be14735d55abb0ef6a1987a1d17387061 100644
+--- a/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
++++ b/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
+@@ -143,6 +143,16 @@ export function StatusBarVisibilityMenu({
+           <AgentIcon agent="cursor" size={14} />
+           {translate('auto.components.status.bar.StatusBar.cursorUsageMenu', 'Cursor Usage')}
+         </DropdownMenuCheckboxItem>
++        <DropdownMenuCheckboxItem
++          checked={statusBarItems.includes('qwencloud')}
++          onCheckedChange={() => {
++            recordFeatureInteraction('usage-tracking')
++            toggleStatusBarItem('qwencloud')
++          }}
++        >
++          <AgentIcon agent="qwen-code" size={14} />
++          {translate('auto.components.status.bar.StatusBar.qwenCloudUsageMenu', 'Qwen Cloud Usage')}
++        </DropdownMenuCheckboxItem>
+         <DropdownMenuCheckboxItem
+           checked={statusBarItems.includes('ssh')}
+           onCheckedChange={() => {
+diff --git a/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx b/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
+index de4f5a0e06f82207e7bf6bdbed518c378529292d..a55cd08f15d1bf35d36bf63e8bc169cbc775498b 100644
+--- a/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
++++ b/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
+@@ -93,23 +93,27 @@ describe('UsageRow', () => {
+     const markup = renderToStaticMarkup(
+       <TooltipProvider>
+         <UsageRosterPanel
+-          providers={[
++          segments={[
+             {
+-              ...signedOutCodex,
+-              session: {
+-                usedPercent: 25,
+-                windowMinutes: 300,
+-                resetsAt: sessionReset,
+-                resetDescription: null
++              key: 'codex',
++              limits: {
++                ...signedOutCodex,
++                session: {
++                  usedPercent: 25,
++                  windowMinutes: 300,
++                  resetsAt: sessionReset,
++                  resetDescription: null
++                },
++                weekly: {
++                  usedPercent: 10,
++                  windowMinutes: 10_080,
++                  resetsAt: weeklyReset,
++                  resetDescription: null
++                },
++                status: 'ok',
++                error: null
+               },
+-              weekly: {
+-                usedPercent: 10,
+-                windowMinutes: 10_080,
+-                resetsAt: weeklyReset,
+-                resetDescription: null
+-              },
+-              status: 'ok',
+-              error: null
++              badge: null
+             }
+           ]}
+           display="used"
+@@ -127,7 +131,9 @@ describe('UsageRow', () => {
+     )
+ 
+     expect(mocks.useResetCountdownClock).toHaveBeenCalledOnce()
+-    expect(mocks.useResetCountdownClock).toHaveBeenCalledWith([sessionReset, weeklyReset])
++    // The trailing slot is the lane's Retry-After deadline: absent here, but in the clock's
++    // input so an all-expired lane's countdown still ticks.
++    expect(mocks.useResetCountdownClock).toHaveBeenCalledWith([sessionReset, weeklyReset, null])
+     expect(markup).toContain('Resets in 2m')
+     expect(markup).toContain('5h')
+     expect(markup).toContain('25%')
+@@ -171,6 +177,7 @@ describe('UsageRow', () => {
+     expect(markup).not.toContain('Resets in')
+   })
+ 
++  // Fable is a separate 7d pool; the subscription weekly owns the pill even when Fable is hotter.
+   it('uses the same compact selection for Claude subscription windows', () => {
+     const markup = renderToStaticMarkup(
+       <UsageRow
+@@ -208,10 +215,11 @@ describe('UsageRow', () => {
+ 
+     expect(markup.match(/data-usage-window=/g)).toHaveLength(1)
+     expect(markup).not.toContain('data-usage-bar')
+-    expect(markup).toContain('Fable')
+-    expect(markup).toContain('75%')
++    expect(markup).toContain('wk')
++    expect(markup).toContain('60%')
++    expect(markup).not.toContain('Fable')
+     expect(markup).not.toContain('25%')
+-    expect(markup).not.toContain('60%')
++    expect(markup).not.toContain('75%')
+   })
+ 
+   it('renders every window below the header in verbose mode', () => {
+@@ -275,7 +283,7 @@ describe('UsageRosterPanel density picker', () => {
+       root.render(
+         <TooltipProvider>
+           <UsageRosterPanel
+-            providers={[]}
++            segments={[]}
+             display="used"
+             statusBarUsageMode={statusBarUsageMode}
+             onStatusBarUsageModeChange={onStatusBarUsageModeChange}
+diff --git a/src/renderer/src/components/status-bar/UsageRosterPanel.tsx b/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
+index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b7760f0e0 100644
+--- a/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
++++ b/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
+@@ -15,7 +15,13 @@ import { barColor, formatResetCountdown, getWindowSections, ProviderIcon } from
+ import { getProviderDisplayName } from './usage-error-copy'
+ import { formatPlanLabel, usageTextColorClass } from './usage-roster-formatting'
+ import { getUsageRosterRowState, type UsageRosterRowState } from './usage-roster-row-state'
++import {
++  getRetainedSampleNotice,
++  getUsageRetryCountdownLabel,
++  isUsageWindowExpired
++} from './usage-stale-sample'
+ import type { StatusBarUsageMode } from '../../../../shared/status-bar-usage-mode'
++import type { UsageAccountBadge, UsageBarSegment } from './usage-account-segments'
+ 
+ type ProviderId = ProviderRateLimits['provider']
+ export type UsageSection = { label: string; window: RateLimitWindow }
+@@ -54,19 +60,29 @@ function shortLabel(
+     : formatWindowLabel(section.window.windowMinutes)
+ }
+ 
+-export function getTightestUsageSection(p: ProviderRateLimits): UsageSection | null {
++/**
++ * The single window the bar pill and the compact row summarize.
++ *
++ * Why weekly first: the 5h session window churns constantly and is the one a user trips by
++ * accident, so it kept stealing the pill from the weekly pool — the quota that actually
++ * decides whether the day's work can continue. Providers with no weekly window (Grok's
++ * monthly, Gemini's per-model buckets) fall back to the highest-used window so the pill
++ * still reports the binding constraint rather than nothing.
++ */
++export function getStatusBarUsageSection(p: ProviderRateLimits): UsageSection | null {
+   const sections = usedSections(p)
+   if (sections.length === 0) {
+     return null
+   }
+-  // Why: the footer promises one quiet summary per provider; choose urgency by
+-  // consumption even when the user displays the complementary “% left” value.
+-  const tightest = sections.reduce((current, candidate) =>
+-    clampUsedPercent(candidate.window.usedPercent) > clampUsedPercent(current.window.usedPercent)
+-      ? candidate
+-      : current
+-  )
+-  return { ...tightest, label: shortLabel(p, tightest, true) }
++  // Identity, not label: `shortLabel` renders both weekly pools as 7d text.
++  const chosen =
++    sections.find((s) => s.window === p.weekly) ??
++    sections.reduce((current, candidate) =>
++      clampUsedPercent(candidate.window.usedPercent) > clampUsedPercent(current.window.usedPercent)
++        ? candidate
++        : current
++    )
++  return { ...chosen, label: shortLabel(p, chosen, true) }
+ }
+ 
+ // The soonest-resetting window summarizes the agent's next reset in one line.
+@@ -84,28 +100,45 @@ function UsageMetric({
+   section,
+   label,
+   display,
+-  showBar = true
++  showBar = true,
++  stale = false,
++  now
+ }: {
+   section: UsageSection
+   label: string
+   display: UsagePercentageDisplay
+   showBar?: boolean
++  stale?: boolean
++  now: number
+ }): React.JSX.Element {
+   const used = clampUsedPercent(section.window.usedPercent)
+   const shown = getDisplayedUsagePercentage(section.window.usedPercent, display)
++  // Expiry is a property of the window, not of the refresh: a period that already reset
++  // cannot be reported whatever the fetch is doing.
++  const expired = isUsageWindowExpired(section.window, now)
+ 
+   return (
+     <span data-usage-window={section.label} className="flex shrink-0 items-center gap-1.5">
+       <span className="text-[10px] text-muted-foreground">{label}</span>
+       {showBar ? (
+         <span data-usage-bar className="h-[5px] w-7 overflow-hidden rounded-full bg-muted">
+-          <span
+-            className={`block h-full rounded-full ${barColor(used)}`}
+-            style={{ width: `${shown}%` }}
+-          />
++          {expired ? null : (
++            <span
++              className={`block h-full rounded-full ${stale ? 'bg-muted-foreground/40' : barColor(used)}`}
++              style={{ width: `${shown}%` }}
++            />
++          )}
+         </span>
+       ) : null}
+-      <span className={`tabular-nums text-[11px] ${usageTextColorClass(used)}`}>{shown}%</span>
++      {expired ? (
++        <span className="tabular-nums text-[11px] text-muted-foreground">—</span>
++      ) : (
++        <span
++          className={`tabular-nums text-[11px] ${stale ? 'text-muted-foreground' : usageTextColorClass(used)}`}
++        >
++          {shown}%
++        </span>
++      )}
+     </span>
+   )
+ }
+@@ -116,7 +149,8 @@ export function UsageRow({
+   state,
+   showSignInAction,
+   now,
+-  mode = 'verbose'
++  mode = 'verbose',
++  account = null
+ }: {
+   p: ProviderRateLimits
+   display: UsagePercentageDisplay
+@@ -124,13 +158,24 @@ export function UsageRow({
+   showSignInAction: boolean
+   now: number
+   mode?: StatusBarUsageMode
++  account?: UsageAccountBadge | null
+ }): React.JSX.Element {
+   const sections = usedSections(p)
+   const hasUsage = sections.length > 0
++  // A signed-out lane with an older sample is just as stale as a failing refresh.
++  const stale = state.kind === 'stale-usage' || (hasUsage && state.kind === 'sign-in')
+   const name = getProviderDisplayName(p.provider)
++  const accountLabel = account
++    ? (account.email ??
++      translate('auto.components.status.bar.UsageRosterPanel.accountOrdinal', 'account {{n}}', {
++        n: String(account.ordinal)
++      }))
++    : null
+   const plan = formatPlanLabel(p.planType)
+-  const reset = hasUsage ? soonestResetLabel(sections, now) : null
+-  const tightest = mode === 'compact' ? getTightestUsageSection(p) : null
++  // A countdown off a retained window would read as a live measurement of the current period.
++  const reset = hasUsage && !stale ? soonestResetLabel(sections, now) : null
++  const summary = mode === 'compact' ? getStatusBarUsageSection(p) : null
++  const retry = stale ? getUsageRetryCountdownLabel(p, now) : null
+ 
+   return (
+     <div data-usage-mode={mode} className="flex min-w-0 flex-1 flex-col gap-1">
+@@ -140,26 +185,38 @@ export function UsageRow({
+         </span>
+         <span className="min-w-0 shrink truncate text-[13px] font-medium text-foreground">
+           {name}
++          {accountLabel ? (
++            <span
++              className={
++                account?.isActive
++                  ? 'font-normal text-foreground/80'
++                  : 'font-normal text-muted-foreground'
++              }
++            >
++              {' · '}
++              {accountLabel}
++            </span>
++          ) : null}
+           {plan ? <span className="font-normal text-muted-foreground"> · {plan}</span> : null}
+         </span>
+-        {!hasUsage ? (
+-          <>
+-            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+-              {state.statusLabel}
+-            </span>
+-            {showSignInAction ? (
+-              <span className="ml-auto shrink-0 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground">
+-                {translate('auto.components.status.bar.StatusBar.c35af53b73', 'Sign in')}
+-              </span>
+-            ) : null}
+-          </>
+-        ) : tightest ? (
++        {state.statusLabel ? (
++          <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground">
++            {state.statusLabel}
++          </span>
++        ) : null}
++        {showSignInAction ? (
++          <span className="ml-auto shrink-0 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground">
++            {translate('auto.components.status.bar.StatusBar.c35af53b73', 'Sign in')}
++          </span>
++        ) : summary ? (
+           <span className="ml-auto">
+             <UsageMetric
+-              section={tightest}
+-              label={tightest.label}
++              section={summary}
++              label={summary.label}
+               display={display}
+               showBar={false}
++              stale={stale}
++              now={now}
+             />
+           </span>
+         ) : reset ? (
+@@ -174,21 +231,25 @@ export function UsageRow({
+               section={section}
+               label={shortLabel(p, section)}
+               display={display}
++              stale={stale}
++              now={now}
+             />
+           ))}
+         </div>
+       ) : null}
++      {hasUsage && stale ? (
++        <div className="truncate pl-[30px] text-[10px] text-muted-foreground">
++          {getRetainedSampleNotice(p, now)}
++          {retry ? ` · ${retry}` : ''}
++        </div>
++      ) : null}
+     </div>
+   )
+ }
+ 
+-/**
+- * Consolidated "Usage" popover — one row per agent (icon · name · reset ·
+- * per-window bars), opened from the status-bar roster pill. Deep per-agent
+- * actions route to Settings via the callbacks.
+- */
++/** Consolidated Usage popover, keyed by account lane rather than provider. */
+ export function UsageRosterPanel({
+-  providers,
++  segments,
+   display,
+   statusBarUsageMode,
+   onStatusBarUsageModeChange,
+@@ -201,7 +262,7 @@ export function UsageRosterPanel({
+   onUsageDetails,
+   renderRow
+ }: {
+-  providers: ProviderRateLimits[]
++  segments: UsageBarSegment[]
+   display: UsagePercentageDisplay
+   statusBarUsageMode: StatusBarUsageMode
+   onStatusBarUsageModeChange: (mode: StatusBarUsageMode) => void
+@@ -212,20 +273,32 @@ export function UsageRosterPanel({
+   canSignIn: (provider: ProviderId) => boolean
+   onManageAccounts: () => void
+   onUsageDetails: () => void
+-  // Lets the host wrap a provider's row in a richer control (e.g. the
+-  // Claude/Codex account-switch drill-in submenu); return null to use the
+-  // default clickable row.
+-  renderRow?: (p: ProviderRateLimits, row: React.ReactNode) => React.ReactNode
++  // Lets the host wrap an account lane in a richer control.
++  renderRow?: (segment: UsageBarSegment, row: React.ReactNode) => React.ReactNode
+ }): React.JSX.Element {
+   // Why: one boundary-scheduled clock keeps every open row current without per-provider timers.
++  // Retry deadlines are in the list too: a lane whose windows have all expired would otherwise
++  // freeze `now` at mount and leave its countdown and sample age stuck.
+   const now = useResetCountdownClock(
+-    providers.flatMap((provider) =>
+-      usedSections(provider).map((section) => section.window.resetsAt)
+-    )
++    segments.flatMap((segment) => [
++      ...usedSections(segment.limits).map((section) => section.window.resetsAt),
++      segment.limits.usageMetadata?.retryAtMs ?? null
++    ])
+   )
+-  // Worst-first so the agent nearest a limit sits on top.
+-  const sorted = [...providers].sort(
+-    (a, b) => providerMaxUsed(usedSections(b)) - providerMaxUsed(usedSections(a))
++  const worstByProvider = new Map<string, number>()
++  for (const segment of segments) {
++    const used = providerMaxUsed(usedSections(segment.limits))
++    const seen = worstByProvider.get(segment.limits.provider)
++    if (seen === undefined || used > seen) {
++      worstByProvider.set(segment.limits.provider, used)
++    }
++  }
++  const sorted = [...segments].sort(
++    (a, b) =>
++      (worstByProvider.get(b.limits.provider) ?? 0) -
++        (worstByProvider.get(a.limits.provider) ?? 0) ||
++      a.limits.provider.localeCompare(b.limits.provider) ||
++      (a.badge?.ordinal ?? 0) - (b.badge?.ordinal ?? 0)
+   )
+ 
+   return (
+@@ -286,7 +359,8 @@ export function UsageRosterPanel({
+         />
+       </div>
+       <div className="border-t border-border/70" />
+-      {sorted.map((p) => {
++      {sorted.map((segment) => {
++        const p = segment.limits
+         const state = getUsageRosterRowState(p, usedSections(p).length > 0)
+         const showSignInAction = state.kind === 'sign-in' && canSignIn(p.provider)
+         const rowNode = (
+@@ -297,12 +371,13 @@ export function UsageRosterPanel({
+             showSignInAction={showSignInAction}
+             now={now}
+             mode={statusBarUsageMode}
++            account={segment.badge}
+           />
+         )
+         if (showSignInAction) {
+           return (
+             <DropdownMenuItem
+-              key={p.provider}
++              key={segment.key}
+               onSelect={() => onSignIn(p.provider)}
+               className="w-full cursor-pointer rounded-none px-3.5 py-2.5"
+             >
+@@ -310,13 +385,13 @@ export function UsageRosterPanel({
+             </DropdownMenuItem>
+           )
+         }
+-        const custom = renderRow?.(p, rowNode)
++        const custom = renderRow?.(segment, rowNode)
+         if (custom) {
+-          return <React.Fragment key={p.provider}>{custom}</React.Fragment>
++          return <React.Fragment key={segment.key}>{custom}</React.Fragment>
+         }
+         return (
+           <DropdownMenuItem
+-            key={p.provider}
++            key={segment.key}
+             onSelect={() => onOpenProvider(p.provider)}
+             className="w-full cursor-pointer rounded-none px-3.5 py-2.5"
+           >
+diff --git a/src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx b/src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..cf9d5d248375b1864458bd76ec5fbc9060a0df79
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx
+@@ -0,0 +1,110 @@
++import { renderToStaticMarkup } from 'react-dom/server'
++import { describe, expect, it, vi } from 'vitest'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++
++vi.mock('@/i18n/i18n', () => ({
++  i18n: { language: 'en' },
++  translate: (_key: string, fallback: string) => fallback
++}))
++
++vi.mock('@/lib/agent-catalog', () => ({
++  AgentIcon: () => null
++}))
++
++vi.mock('../../store', () => ({
++  useAppStore: (selector: (state: { usagePercentageDisplay: 'used' | 'remaining' }) => unknown) =>
++    selector({ usagePercentageDisplay: 'used' })
++}))
++
++function claudeLimits(usedPercent: number): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: { usedPercent, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: null,
++    status: 'ok'
++  }
++}
++
++describe('ProviderSegment account badge', () => {
++  it('labels a lane with its ordinal and discloses the email on hover', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++
++    const markup = renderToStaticMarkup(
++      <ProviderSegment
++        p={claudeLimits(42)}
++        compact={false}
++        display="used"
++        badge={{ ordinal: 2, email: 'florian.seran@gmail.com', isActive: false }}
++      />
++    )
++
++    expect(markup).toContain('title="florian.seran@gmail.com"')
++    expect(markup).toMatch(/>2<\/span>/)
++    expect(markup).toContain('42%')
++  })
++
++  // Why: on a bar of identical provider icons the user still has to know which account the next
++  // session will burn, so the active lane is emphasised rather than merely ordered.
++  it('emphasises the active lane and dims the others', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++
++    const active = renderToStaticMarkup(
++      <ProviderSegment
++        p={claudeLimits(10)}
++        compact={false}
++        display="used"
++        badge={{ ordinal: 1, email: 'a@example.com', isActive: true }}
++      />
++    )
++    const inactive = renderToStaticMarkup(
++      <ProviderSegment
++        p={claudeLimits(10)}
++        compact={false}
++        display="used"
++        badge={{ ordinal: 2, email: 'b@example.com', isActive: false }}
++      />
++    )
++
++    expect(active).not.toBe(inactive)
++    expect(active).toContain('font-semibold')
++    expect(inactive).toContain('font-medium')
++  })
++
++  it('renders no badge at all for a single-account provider', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++
++    const markup = renderToStaticMarkup(
++      <ProviderSegment p={claudeLimits(42)} compact={false} display="used" />
++    )
++
++    expect(markup).not.toMatch(/>\d<\/span>/)
++    expect(markup).not.toContain('title=')
++  })
++
++  // Why: an unfetched lane must read as unknown. A dash is honest; a percentage would not be.
++  it('shows a dash rather than a percentage for an unmeasured lane', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++
++    const markup = renderToStaticMarkup(
++      <ProviderSegment
++        p={{
++          provider: 'claude',
++          session: null,
++          weekly: null,
++          updatedAt: 0,
++          error: null,
++          status: 'unavailable'
++        }}
++        compact={false}
++        display="used"
++        badge={{ ordinal: 3, email: 'c@example.com', isActive: false }}
++      />
++    )
++
++    expect(markup).toContain('--')
++    expect(markup).not.toContain('%')
++    expect(markup).toMatch(/>3<\/span>/)
++  })
++})
+diff --git a/src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx b/src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx
+index 3bab0e1bfcb3b427f08edc1877f03465f6ac0fd7..6bf85db0be2f1f9d7fc8dcee68bf39d3382db356 100644
+--- a/src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx
++++ b/src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx
+@@ -70,7 +70,7 @@ describe('ProviderSegment monthly window', () => {
+     expect(markup).not.toContain('···')
+   })
+ 
+-  it('shows only the highest-used window when several windows exist', async () => {
++  it('prefers the weekly window over hotter session and monthly windows', async () => {
+     const { ProviderSegment } = await import('./StatusBar')
+ 
+     const limits: ProviderRateLimits = {
+@@ -86,12 +86,12 @@ describe('ProviderSegment monthly window', () => {
+       <ProviderSegment p={limits} compact={false} display="used" mode="compact" />
+     )
+ 
+-    expect(markup).toContain('30% used 30d')
++    expect(markup).toContain('20% used wk')
+     expect(markup).not.toContain('10% used')
+-    expect(markup).not.toContain('20% used')
++    expect(markup).not.toContain('30% used')
+   })
+ 
+-  it('selects a named bucket as the tightest provider window', async () => {
++  it('falls back to the highest-used bucket when the provider has no weekly window', async () => {
+     const { ProviderSegment } = await import('./StatusBar')
+     const limits: ProviderRateLimits = {
+       provider: 'gemini',
+@@ -115,7 +115,8 @@ describe('ProviderSegment monthly window', () => {
+   })
+ 
+   // Why: #8378 — status-bar chip showed fixed window size ("5h") while the
+-  // usage popup showed remaining time for the same resetsAt.
++  // usage popup showed remaining time for the same resetsAt. Weekly is absent here,
++  // so the session window is the fallback summary and must still count down live.
+   it('shows remaining session time on the chip when resetsAt is known (repro-8378)', async () => {
+     const { ProviderSegment } = await import('./StatusBar')
+     const now = 1_700_000_000_000
+@@ -126,7 +127,7 @@ describe('ProviderSegment monthly window', () => {
+       const limits: ProviderRateLimits = {
+         provider: 'codex',
+         session: windowOf(42, 300, now + remainingMs),
+-        weekly: windowOf(10, 10080, now + 6 * 24 * 60 * 60_000),
++        weekly: null,
+         updatedAt: now,
+         error: null,
+         status: 'ok'
+@@ -137,9 +138,32 @@ describe('ProviderSegment monthly window', () => {
+ 
+       expect(markup).toContain('42% used 2h 33m')
+       expect(markup).not.toContain('5h')
+-      // The consolidated footer intentionally renders only the tightest window.
+-      expect(markup).not.toContain('10% used')
+-      expect(markup).not.toContain('wk')
++    } finally {
++      dateNow.mockRestore()
++    }
++  })
++
++  // The weekly pill counts down too: a fixed "wk" label would disagree with the popover.
++  it('counts the weekly window down instead of labelling it "wk" when resetsAt is known', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++    const now = 1_700_000_000_000
++    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now)
++
++    try {
++      const limits: ProviderRateLimits = {
++        provider: 'codex',
++        session: windowOf(42, 300, now + 2 * 60 * 60_000),
++        weekly: windowOf(10, 10080, now + 5 * 24 * 60 * 60_000 + 2 * 60 * 60_000),
++        updatedAt: now,
++        error: null,
++        status: 'ok'
++      }
++      const markup = renderToStaticMarkup(
++        <ProviderSegment p={limits} compact={false} display="used" mode="compact" />
++      )
++
++      expect(markup).toContain('10% used 5d 2h')
++      expect(markup).not.toContain('42% used')
+     } finally {
+       dateNow.mockRestore()
+     }
+@@ -182,13 +206,54 @@ describe('ProviderSegment monthly window', () => {
+     expect(markup).toContain('30% used Fable')
+     expect(markup).not.toContain('40% used')
+   })
++
++  // Why: the bar is the surface a user reads without opening anything; a retained number
++  // whose window already reset would be read there as the current period's usage.
++  it('withholds a retained percentage whose window already reset', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++    const limits: ProviderRateLimits = {
++      provider: 'claude',
++      session: windowOf(41, 300, Date.now() - 60_000),
++      weekly: null,
++      updatedAt: Date.now() - 26 * 3_600_000,
++      error: 'HTTP 429 from the Claude usage endpoint',
++      status: 'error',
++      usageMetadata: { failureKind: 'rate-limited' }
++    }
++
++    const markup = renderToStaticMarkup(
++      <ProviderSegment p={limits} compact={false} display="used" mode="verbose" />
++    )
++
++    expect(markup).not.toContain('41% used')
++    expect(markup).toContain('—')
++  })
++
++  it('still shows a retained percentage while its window is open', async () => {
++    const { ProviderSegment } = await import('./StatusBar')
++    const limits: ProviderRateLimits = {
++      provider: 'claude',
++      session: windowOf(41, 300, Date.now() + 3_600_000),
++      weekly: null,
++      updatedAt: Date.now() - 12 * 60_000,
++      error: 'HTTP 429 from the Claude usage endpoint',
++      status: 'error',
++      usageMetadata: { failureKind: 'rate-limited' }
++    }
++
++    const markup = renderToStaticMarkup(
++      <ProviderSegment p={limits} compact={false} display="used" mode="verbose" />
++    )
++
++    expect(markup).toContain('41% used')
++  })
+ })
+ 
+ describe('undefined provider window safety (crash d2c1da69 / bb74236c)', () => {
+   // A partial/rehydrated provider can carry an undefined (not null) window even
+   // though the type declares `session`/`weekly` as `RateLimitWindow | null`. The
+   // old `s.window !== null` filter let the undefined-window section through, so
+-  // getTightestUsageSection's reduce read `.usedPercent` of undefined and crashed
++  // getStatusBarUsageSection's reduce read `.usedPercent` of undefined and crashed
+   // the status-bar overlay (TypeError in ProviderSegment).
+   const partialProvider = {
+     provider: 'codex',
+@@ -198,10 +263,10 @@ describe('undefined provider window safety (crash d2c1da69 / bb74236c)', () => {
+     status: 'ok'
+   } as unknown as ProviderRateLimits // `session` omitted -> undefined at runtime
+ 
+-  it('getTightestUsageSection ignores an undefined window instead of crashing', async () => {
+-    const { getTightestUsageSection } = await import('./UsageRosterPanel')
+-    expect(() => getTightestUsageSection(partialProvider)).not.toThrow()
+-    expect(getTightestUsageSection(partialProvider)?.window.usedPercent).toBe(42)
++  it('getStatusBarUsageSection ignores an undefined window instead of crashing', async () => {
++    const { getStatusBarUsageSection } = await import('./UsageRosterPanel')
++    expect(() => getStatusBarUsageSection(partialProvider)).not.toThrow()
++    expect(getStatusBarUsageSection(partialProvider)?.window.usedPercent).toBe(42)
+   })
+ 
+   it('ProviderSegment renders without crashing when a provider window is undefined', async () => {
+diff --git a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts b/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
+index b144ddbdeaeaeb4149a08af7b1d897bd413e4960..ae945e2ae0bc03c5db4963412381fabfb0384ef7 100644
+--- a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
++++ b/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
+@@ -77,6 +77,7 @@ function usageSettings(overrides: Partial<UsageProviderSettings> = {}): UsagePro
+     minimaxApiKeyConfigured: false,
+     opencodeGoApiKeyConfigured: false,
+     grokAuthConfigured: false,
++    codexbarAvailable: false,
+     cursorAuthConfigured: false,
+     ...overrides
+   }
+diff --git a/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts b/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
+index 086540781d71093064b6caf418f8971ea3f1a457..c4f8c413852d1b987ccee255b16e6978c9e14cad 100644
+--- a/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
++++ b/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
+@@ -21,6 +21,9 @@ export type UsageProviderSettings = Pick<
+   // store, neither of which the renderer can see; main reports presence.
+   opencodeGoApiKeyConfigured: boolean
+   grokAuthConfigured: boolean
++  // Why: codexbar-metered providers (Qwen Cloud) share one durable signal — the
++  // presence of the codexbar binary. There is no per-provider credential.
++  codexbarAvailable: boolean
+   cursorAuthConfigured: boolean
+ }
+ 
+@@ -34,6 +37,9 @@ type UsageProviderSnapshots = {
+   minimax: ProviderRateLimits | null | undefined
+   grok: ProviderRateLimits | null | undefined
+   cursor: ProviderRateLimits | null | undefined
++  // Why: optional — with no codexbar binary main never emits this key, and
++  // callers that predate it stay valid.
++  qwencloud?: ProviderRateLimits | null | undefined
+ }
+ 
+ type UsageProviderId = ProviderRateLimits['provider']
+@@ -86,7 +92,8 @@ export function hasUsageProviderSettings(
+     settings?.minimaxCookieConfigured === true ||
+     settings?.minimaxApiKeyConfigured === true ||
+     settings?.grokAuthConfigured === true ||
+-    settings?.cursorAuthConfigured === true
++    settings?.cursorAuthConfigured === true ||
++    settings?.codexbarAvailable === true
+   )
+ }
+ 
+@@ -127,6 +134,9 @@ export function hasUsageProviderSettingsForProvider(
+   if (providerId === 'cursor') {
+     return settings.cursorAuthConfigured === true
+   }
++  if (providerId === 'qwencloud') {
++    return settings.codexbarAvailable === true
++  }
+   return false
+ }
+ 
+@@ -172,6 +182,10 @@ export function isUsageEmptyState(
+   const antigravitySnapshotPending =
+     hasUsageProviderSettingsForProvider('antigravity', settings) &&
+     isProviderSnapshotPending(providers.antigravity)
++  // Why: with no codexbar binary the Qwen Cloud snapshot stays null forever, so an
++  // unguarded pending check would pin the CTA off permanently.
++  const codexBarSnapshotsPending =
++    settings.codexbarAvailable === true && isProviderSnapshotPending(providers.qwencloud)
+   if (
+     isProviderSnapshotPending(providers.claude) ||
+     isProviderSnapshotPending(providers.codex) ||
+@@ -181,7 +195,8 @@ export function isUsageEmptyState(
+     antigravitySnapshotPending ||
+     isProviderSnapshotPending(providers.minimax) ||
+     isProviderSnapshotPending(providers.grok) ||
+-    isProviderSnapshotPending(providers.cursor)
++    isProviderSnapshotPending(providers.cursor) ||
++    codexBarSnapshotsPending
+   ) {
+     return false
+   }
+@@ -195,6 +210,7 @@ export function isUsageEmptyState(
+     !isProviderConfigured(providers.antigravity) &&
+     !isProviderConfigured(providers.minimax) &&
+     !isProviderConfigured(providers.grok) &&
+-    !isProviderConfigured(providers.cursor)
++    !isProviderConfigured(providers.cursor) &&
++    !isProviderConfigured(providers.qwencloud)
+   )
+ }
+diff --git a/src/renderer/src/components/status-bar/tooltip.test.ts b/src/renderer/src/components/status-bar/tooltip.test.ts
+index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d25424b9d 100644
+--- a/src/renderer/src/components/status-bar/tooltip.test.ts
++++ b/src/renderer/src/components/status-bar/tooltip.test.ts
+@@ -186,10 +186,12 @@ describe('provider usage error copy', () => {
+     }
+   })
+ 
+-  it('keeps rate-limit failures distinct from refresh failures', () => {
++  // Why: "Limited" reads as "your subscription is out"; what actually failed is Orca's own
++  // usage read, which says nothing about the user's remaining quota.
++  it('names a rate-limited usage read as a refresh failure, not an exhausted plan', () => {
+     const p = provider({ error: 'Claude usage is rate limited right now.' })
+ 
+-    expect(getProviderUsageStatusLabel(p)).toBe('Limited')
++    expect(getProviderUsageStatusLabel(p)).toBe('Refresh rate limited')
+     expect(getProviderUsageErrorMessage(p)).toBe('Claude usage is rate limited right now.')
+   })
+ 
+@@ -198,12 +200,24 @@ describe('provider usage error copy', () => {
+       error: 'Rate limit reached while refreshing OAuth access token.'
+     })
+ 
+-    expect(getProviderUsageStatusLabel(p)).toBe('Limited')
++    expect(getProviderUsageStatusLabel(p)).toBe('Refresh rate limited')
+     expect(getProviderUsageErrorMessage(p)).toBe(
+       'Rate limit reached while refreshing OAuth access token.'
+     )
+   })
+ 
++  it('explains a structured Claude 429 as a throttled read of the quota endpoint', () => {
++    const p = provider({
++      error: 'HTTP 429 from the Claude usage endpoint',
++      usageMetadata: { failureKind: 'rate-limited' }
++    })
++
++    expect(getProviderUsageStatusLabel(p)).toBe('Refresh rate limited')
++    expect(getProviderUsageErrorMessage(p)).toBe(
++      'Claude throttled the usage read itself. This does not mean your subscription quota is spent.'
++    )
++  })
++
+   it('classifies the Codex chatgpt-auth-required rate-limits read error as auth, not Limited', () => {
+     // Why: the message mentions "rate limits" only as the object it failed to
+     // read; labeling it "Limited" would wrongly imply the user hit a limit.
+@@ -229,7 +243,9 @@ describe('provider usage error copy', () => {
+     )
+   })
+ 
+-  it('keeps live-Claude refresh deferral copy visible', () => {
++  // Why: with per-account credentials the deferral is a credential rotation Orca is waiting on,
++  // not a missing session the user is supposed to go open somewhere.
++  it('describes a deferred refresh as waiting on credentials, not on the user', () => {
+     const p = provider({
+       error:
+         'Claude usage refresh is waiting for the live Claude terminal to rotate its credentials.',
+@@ -239,9 +255,9 @@ describe('provider usage error copy', () => {
+       }
+     })
+ 
+-    expect(getProviderUsageStatusLabel(p)).toBe('Waiting for Claude session')
++    expect(getProviderUsageStatusLabel(p)).toBe('Waiting for credential refresh')
+     expect(getProviderUsageErrorMessage(p)).toBe(
+-      'Claude usage will refresh after the live Claude terminal rotates its credentials.'
++      'Claude usage refreshes once this account finishes rotating its credentials.'
+     )
+   })
+ 
+diff --git a/src/renderer/src/components/status-bar/tooltip.tsx b/src/renderer/src/components/status-bar/tooltip.tsx
+index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c5915680873279ae52 100644
+--- a/src/renderer/src/components/status-bar/tooltip.tsx
++++ b/src/renderer/src/components/status-bar/tooltip.tsx
+@@ -11,6 +11,7 @@ import {
+   getProviderUsageErrorMessage,
+   getProviderUsageStatusLabel
+ } from './usage-error-copy'
++import { isUsageWindowExpired } from './usage-stale-sample'
+ import {
+   clampUsedPercent,
+   getDisplayedUsagePercentage,
+@@ -97,9 +98,14 @@ export function ProviderIcon({ provider }: { provider: string }): React.JSX.Elem
+   if (provider === 'grok') {
+     return <AgentIcon agent="grok" size={13} />
+   }
++  // Why: reuse the agent catalog's brand marks — these providers meter the same
++  // vendors already listed there, so no new asset is needed.
+   if (provider === 'cursor') {
+     return <AgentIcon agent="cursor" size={13} />
+   }
++  if (provider === 'qwencloud') {
++    return <AgentIcon agent="qwen-code" size={13} />
++  }
+   return <ClaudeIcon size={13} />
+ }
+ 
+@@ -117,22 +123,21 @@ function ErrorMessage({
+ }): React.JSX.Element {
+   const labelClass = inverted ? 'text-background/80' : 'text-foreground/85'
+   const detailClass = inverted ? 'text-background/55' : 'text-muted-foreground'
+-  const genericRefreshLabel = translate(
+-    'auto.components.status.bar.tooltip.e740f92596',
+-    'Refresh failed'
+-  )
+-  const staleRefreshLabel = translate(
+-    'auto.components.status.bar.tooltip.a9a318b7a3',
+-    'Refresh failed — showing cached data'
+-  )
+   const resolvedLabel =
+-    stale && (!label || label === genericRefreshLabel)
+-      ? staleRefreshLabel
+-      : (label ?? genericRefreshLabel)
++    label ?? translate('auto.components.status.bar.tooltip.e740f92596', 'Refresh failed')
++  // Keep the precise failure name and the cached-data caveat together; the caveat alone
++  // used to replace the name, which lost the distinction this copy exists to make.
++  const displayLabel = stale
++    ? translate(
++        'auto.components.status.bar.tooltip.staleCachedLabel',
++        '{{label}} — showing cached data',
++        { label: resolvedLabel }
++      )
++    : resolvedLabel
+ 
+   return (
+     <div className="space-y-0.5">
+-      <div className={`text-[11px] font-medium ${labelClass}`}>{resolvedLabel}</div>
++      <div className={`text-[11px] font-medium ${labelClass}`}>{displayLabel}</div>
+       <div className={detailClass}>{message}</div>
+     </div>
+   )
+@@ -145,39 +150,23 @@ function ErrorMessage({
+ export function getWindowSections(
+   p: ProviderRateLimits
+ ): { label: string; window: RateLimitWindow | null }[] {
+-  if (p.buckets?.length) {
+-    const bucketSections = p.buckets.map((b) => ({ label: b.name, window: b as RateLimitWindow }))
+-    return [
+-      ...bucketSections,
+-      // Why: Cursor reports the plan total in `monthly` and its pools as buckets,
+-      // so dropping it here would hide the number closest to the user's cap.
+-      ...(p.monthly
+-        ? [
+-            {
+-              label:
+-                p.provider === 'cursor'
+-                  ? translate('auto.components.status.bar.tooltip.cursor.plan', 'Plan')
+-                  : translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
+-              window: p.monthly
+-            }
+-          ]
+-        : []),
+-      {
+-        label: translate('auto.components.status.bar.tooltip.252c096536', 'Weekly'),
+-        window: p.weekly
+-      }
+-    ]
+-  }
+-  const sections: { label: string; window: RateLimitWindow | null }[] = [
+-    {
+-      label: translate('auto.components.status.bar.tooltip.94038ad2fa', 'Session'),
+-      window: p.session
+-    },
+-    {
+-      label: translate('auto.components.status.bar.tooltip.252c096536', 'Weekly'),
+-      window: p.weekly
+-    }
+-  ]
++  const hasBuckets = Boolean(p.buckets?.length)
++  // Why buckets stand in for the session row rather than for every window: Gemini's per-model
++  // pools ARE its 5h quota broken down, so listing the aggregate beside them just repeats it.
++  // Replacing the whole list was the bug — it also swallowed `monthly`, which hid Cursor's entire
++  // 31-day subscription pool behind a side-pool like "Grok Bot".
++  const sections: { label: string; window: RateLimitWindow | null }[] = hasBuckets
++    ? (p.buckets ?? []).map((b) => ({ label: b.name, window: b as RateLimitWindow }))
++    : [
++        {
++          label: translate('auto.components.status.bar.tooltip.94038ad2fa', 'Session'),
++          window: p.session
++        }
++      ]
++  sections.push({
++    label: translate('auto.components.status.bar.tooltip.252c096536', 'Weekly'),
++    window: p.weekly
++  })
+   if (p.fableWeekly !== undefined && p.fableWeekly !== null) {
+     sections.push({
+       label: translate('auto.components.status.bar.tooltip.a79c64f87e', 'Fable'),
+@@ -186,7 +175,12 @@ export function getWindowSections(
+   }
+   if (p.monthly !== undefined && p.monthly !== null) {
+     sections.push({
+-      label: translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
++      // Why: Cursor reports the plan total in `monthly` and its pools as buckets;
++      // "Plan" names the number closest to the user's cap.
++      label:
++        p.provider === 'cursor'
++          ? translate('auto.components.status.bar.tooltip.cursor.plan', 'Plan')
++          : translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
+       window: p.monthly
+     })
+   }
+@@ -236,20 +230,26 @@ function ProviderRateLimitWindowSection({
+   }
+   const usedPct = clampUsedPercent(window.usedPercent)
+   const displayedPct = getDisplayedUsagePercentage(usedPct, usagePercentageDisplay)
+-  const resetLabel = window.resetsAt ? formatResetCountdown(window.resetsAt - now) : null
++  // A window past its reset describes a quota period that no longer exists: no number, and
++  // no "Resets now" countdown pretending the reading is current.
++  const expired = isUsageWindowExpired(window, now)
++  const resetLabel =
++    !expired && window.resetsAt ? formatResetCountdown(window.resetsAt - now) : null
+ 
+   return (
+     <div className="space-y-1">
+       <div className={`font-medium ${textClass}`}>{label}</div>
+       <div className={`h-[6px] w-full overflow-hidden rounded-full ${emptyBarClass}`}>
+         {/* Why: fill follows the selected percentage; color still signals consumption urgency. */}
+-        <div
+-          className={`h-full rounded-full ${barColor(usedPct)} transition-all duration-300`}
+-          style={{ width: `${displayedPct}%` }}
+-        />
++        {expired ? null : (
++          <div
++            className={`h-full rounded-full ${barColor(usedPct)} transition-all duration-300`}
++            style={{ width: `${displayedPct}%` }}
++          />
++        )}
+       </div>
+       <div className={`flex justify-between ${mutedClass}`}>
+-        <span>{formatUsagePercentageLabel(usedPct, usagePercentageDisplay)}</span>
++        <span>{expired ? '—' : formatUsagePercentageLabel(usedPct, usagePercentageDisplay)}</span>
+         {resetLabel && <span>{resetLabel}</span>}
+       </div>
+     </div>
+@@ -371,7 +371,8 @@ export function ProviderPanel({
+ 
+       {p.error ? (
+         <ErrorMessage
+-          message={p.error}
++          label={getProviderUsageStatusLabel(p)}
++          message={getProviderUsageErrorMessage(p)}
+           stale={!!(p.session || p.weekly || p.fableWeekly || p.monthly)}
+           inverted={inverted}
+         />
+diff --git a/src/renderer/src/components/status-bar/usage-account-segments.test.ts b/src/renderer/src/components/status-bar/usage-account-segments.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..002d6a54971c3b4662f1bd340fee15bcbeffaf6d
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-account-segments.test.ts
+@@ -0,0 +1,220 @@
++import { describe, expect, it } from 'vitest'
++import {
++  buildStatusBarUsageBarSegments,
++  buildUsageBarSegments,
++  type StatusBarAccountLaneSource
++} from './usage-account-segments'
++import type { ManagedAccountUsageLane } from '../../../../shared/managed-account-usage-roster'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++
++function provider(id: ProviderRateLimits['provider'], usedPercent = 10): ProviderRateLimits {
++  return {
++    provider: id,
++    session: { usedPercent, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: null,
++    status: 'ok'
++  }
++}
++
++function lane(overrides: Partial<ManagedAccountUsageLane> = {}): ManagedAccountUsageLane {
++  return {
++    kind: 'managed',
++    accountId: 'account-1',
++    ordinal: 1,
++    email: 'one@example.com',
++    isActive: false,
++    limits: null,
++    isFetching: false,
++    unmeasuredReason: 'not-fetched',
++    ...overrides
++  }
++}
++
++describe('buildUsageBarSegments', () => {
++  it('keeps one segment per provider when accounts are not expanded', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('claude'), provider('grok')],
++      lanesByProvider: { claude: [lane(), lane({ accountId: 'account-2', ordinal: 2 })] },
++      showAllAccounts: false
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual(['claude', 'grok'])
++    expect(segments.every((segment) => segment.badge === null)).toBe(true)
++  })
++
++  it('gives every lane a unique key so sibling accounts can both render', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('claude')],
++      lanesByProvider: {
++        claude: [
++          lane({ kind: 'system-default', accountId: null, ordinal: 1, email: null }),
++          lane({ accountId: 'account-2', ordinal: 2 })
++        ]
++      },
++      showAllAccounts: true
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual([
++      'claude:system-default',
++      'claude:account-2'
++    ])
++  })
++
++  it('carries the ordinal, email and active flag onto each badge', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('codex')],
++      lanesByProvider: {
++        codex: [
++          lane({ accountId: 'a', ordinal: 1, email: 'a@example.com', isActive: true }),
++          lane({ accountId: 'b', ordinal: 2, email: 'b@example.com' })
++        ]
++      },
++      showAllAccounts: true
++    })
++
++    expect(segments.map((segment) => segment.badge)).toEqual([
++      { ordinal: 1, email: 'a@example.com', isActive: true },
++      { ordinal: 2, email: 'b@example.com', isActive: false }
++    ])
++  })
++
++  // Why: an older remote host omits the active-account field, so lanes are unknowable there.
++  // Falling back to the single active meter beats inventing per-account numbers.
++  it('falls back to the single meter when the host cannot report lanes', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('claude')],
++      lanesByProvider: { claude: null },
++      showAllAccounts: true
++    })
++
++    expect(segments).toEqual([{ key: 'claude', limits: provider('claude'), badge: null }])
++  })
++
++  it('does not expand a provider that has only one lane', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('claude')],
++      lanesByProvider: { claude: [lane({ isActive: true, limits: provider('claude') })] },
++      showAllAccounts: true
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual(['claude'])
++    expect(segments[0]?.badge).toBeNull()
++  })
++
++  it('renders an unfetched lane as unavailable rather than zero', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('claude', 55)],
++      lanesByProvider: {
++        claude: [
++          lane({ accountId: 'a', ordinal: 1, isActive: true, limits: provider('claude', 55) }),
++          lane({ accountId: 'b', ordinal: 2, unmeasuredReason: 'not-fetched' })
++        ]
++      },
++      showAllAccounts: true
++    })
++
++    expect(segments[1]?.limits).toMatchObject({ status: 'unavailable', session: null })
++    expect(segments[1]?.limits.session?.usedPercent).toBeUndefined()
++  })
++
++  it('renders a pending lane as fetching', () => {
++    const segments = buildUsageBarSegments({
++      providers: [provider('codex')],
++      lanesByProvider: {
++        codex: [
++          lane({ accountId: 'a', ordinal: 1, isActive: true, limits: provider('codex') }),
++          lane({ accountId: 'b', ordinal: 2, isFetching: true, unmeasuredReason: 'pending' })
++        ]
++      },
++      showAllAccounts: true
++    })
++
++    expect(segments[1]?.limits.status).toBe('fetching')
++  })
++})
++
++describe('buildStatusBarUsageBarSegments', () => {
++  function source(overrides: Partial<StatusBarAccountLaneSource> = {}): StatusBarAccountLaneSource {
++    return {
++      activeAccountId: 'account-1',
++      systemDefault: null,
++      managedAccounts: [
++        { id: 'account-1', email: 'a@x.com', createdAt: 1 },
++        { id: 'account-2', email: 'b@x.com', createdAt: 2 }
++      ],
++      activeLimits: provider('claude', 41),
++      providerLimits: provider('claude', 41),
++      inactive: [
++        {
++          accountId: 'account-2',
++          rateLimits: provider('claude', 87),
++          updatedAt: 1,
++          isFetching: false
++        }
++      ],
++      ...overrides
++    }
++  }
++
++  it('expands Claude into one segment per managed account', () => {
++    const segments = buildStatusBarUsageBarSegments({
++      providers: [provider('claude', 41)],
++      hideAccountRoster: false,
++      claude: source(),
++      codex: null
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual(['claude:account-1', 'claude:account-2'])
++    expect(segments.map((segment) => segment.limits.session?.usedPercent)).toEqual([41, 87])
++  })
++
++  it('expands Codex independently of Claude', () => {
++    const segments = buildStatusBarUsageBarSegments({
++      providers: [provider('claude', 41), provider('codex', 20)],
++      hideAccountRoster: false,
++      claude: source(),
++      codex: source({
++        activeLimits: provider('codex', 20),
++        providerLimits: provider('codex', 20),
++        inactive: [
++          {
++            accountId: 'account-2',
++            rateLimits: provider('codex', 55),
++            updatedAt: 1,
++            isFetching: false
++          }
++        ]
++      })
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual([
++      'claude:account-1',
++      'claude:account-2',
++      'codex:account-1',
++      'codex:account-2'
++    ])
++  })
++  it('keeps a single meter when a remote owner hides the local roster', () => {
++    const segments = buildStatusBarUsageBarSegments({
++      providers: [provider('claude', 41)],
++      hideAccountRoster: true,
++      claude: source(),
++      codex: null
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual(['claude'])
++  })
++
++  it('keeps a single meter when the host omits the active-account field', () => {
++    const segments = buildStatusBarUsageBarSegments({
++      providers: [provider('claude', 41)],
++      hideAccountRoster: false,
++      claude: source({ activeAccountId: undefined }),
++      codex: null
++    })
++
++    expect(segments.map((segment) => segment.key)).toEqual(['claude'])
++  })
++})
+diff --git a/src/renderer/src/components/status-bar/usage-account-segments.ts b/src/renderer/src/components/status-bar/usage-account-segments.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..de6ef5719f8f2a9de2089cfba9ada81ab973c957
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-account-segments.ts
+@@ -0,0 +1,115 @@
++import type { ProviderRateLimits, RateLimitState } from '../../../../shared/rate-limit-types'
++import {
++  buildManagedAccountUsageLanes,
++  type ManagedAccountDescriptor,
++  type ManagedAccountUsageLane
++} from '../../../../shared/managed-account-usage-roster'
++
++export type UsageAccountBadge = {
++  /** 1-based label shown on the pill; the email is the hover disclosure. */
++  ordinal: number
++  email: string | null
++  isActive: boolean
++}
++
++export type UsageBarSegment = {
++  /** Unique across lanes — `provider` alone collides once one provider owns several accounts. */
++  key: string
++  limits: ProviderRateLimits
++  badge: UsageAccountBadge | null
++}
++
++export type MultiAccountProvider = 'claude' | 'codex'
++
++export type BuildUsageBarSegmentsArgs = {
++  /** Visibility-filtered providers, already in display order. */
++  providers: readonly ProviderRateLimits[]
++  /**
++   * Lanes per provider. `null` means this host cannot say which account is active — an older
++   * remote host omits the field — and the provider then keeps its single active meter.
++   */
++  lanesByProvider: Partial<Record<MultiAccountProvider, ManagedAccountUsageLane[] | null>>
++  showAllAccounts: boolean
++}
++
++export function buildUsageBarSegments(args: BuildUsageBarSegmentsArgs): UsageBarSegment[] {
++  const segments: UsageBarSegment[] = []
++  for (const provider of args.providers) {
++    const lanes = args.lanesByProvider[provider.provider as MultiAccountProvider]
++    if (!args.showAllAccounts || !lanes || lanes.length < 2) {
++      segments.push({ key: provider.provider, limits: provider, badge: null })
++      continue
++    }
++    for (const lane of lanes) {
++      segments.push({
++        key: `${provider.provider}:${lane.accountId ?? 'system-default'}`,
++        limits: lane.limits ?? unmeasuredLimits(provider.provider, lane),
++        badge: { ordinal: lane.ordinal, email: lane.email, isActive: lane.isActive }
++      })
++    }
++  }
++  return segments
++}
++
++export type StatusBarAccountLaneSource = {
++  activeAccountId: string | null | undefined
++  systemDefault: RateLimitState['claudeSystemDefault']
++  managedAccounts: readonly ManagedAccountDescriptor[]
++  activeLimits: ProviderRateLimits | null
++  providerLimits: ProviderRateLimits | null
++  inactive: RateLimitState['inactiveClaudeAccounts']
++}
++
++/**
++ * Expands Claude/Codex into per-account meters. A remote owner or an older host
++ * that omits the active-account field keeps the single provider meter.
++ */
++export function buildStatusBarUsageBarSegments(args: {
++  providers: readonly ProviderRateLimits[]
++  hideAccountRoster: boolean
++  claude: StatusBarAccountLaneSource | null
++  codex: StatusBarAccountLaneSource | null
++}): UsageBarSegment[] {
++  return buildUsageBarSegments({
++    providers: args.providers,
++    lanesByProvider: {
++      ...(args.claude ? { claude: lanesForSource(args.hideAccountRoster, args.claude) } : {}),
++      ...(args.codex ? { codex: lanesForSource(args.hideAccountRoster, args.codex) } : {})
++    },
++    showAllAccounts: true
++  })
++}
++
++function lanesForSource(
++  hideAccountRoster: boolean,
++  source: StatusBarAccountLaneSource
++): ManagedAccountUsageLane[] | null {
++  if (hideAccountRoster || source.activeAccountId === undefined) {
++    return null
++  }
++  return buildManagedAccountUsageLanes({
++    systemDefault: source.systemDefault ?? null,
++    managedAccounts: source.managedAccounts,
++    activeAccountId: source.activeAccountId,
++    activeLimits: source.activeLimits,
++    inactive: source.providerLimits === null ? [] : source.inactive
++  })
++}
++
++/**
++ * Stands in for a lane with no measurement of its own. `unavailable` renders a dimmed dash
++ * rather than a percentage: an unfetched account's usage is unknown, never zero.
++ */
++function unmeasuredLimits(
++  provider: ProviderRateLimits['provider'],
++  lane: ManagedAccountUsageLane
++): ProviderRateLimits {
++  return {
++    provider,
++    session: null,
++    weekly: null,
++    updatedAt: 0,
++    error: null,
++    status: lane.unmeasuredReason === 'pending' ? 'fetching' : 'unavailable'
++  }
++}
+diff --git a/src/renderer/src/components/status-bar/usage-error-copy.ts b/src/renderer/src/components/status-bar/usage-error-copy.ts
+index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae75431f079cd 100644
+--- a/src/renderer/src/components/status-bar/usage-error-copy.ts
++++ b/src/renderer/src/components/status-bar/usage-error-copy.ts
+@@ -29,6 +29,9 @@ export function getProviderDisplayName(provider: ProviderRateLimits['provider'])
+   if (provider === 'cursor') {
+     return 'Cursor'
+   }
++  if (provider === 'qwencloud') {
++    return 'Qwen Cloud'
++  }
+   return provider
+ }
+ 
+@@ -90,8 +93,13 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+     switch (p.usageMetadata?.failureKind) {
+       case 'deferred-by-live-session':
+         return translate(
+-          'auto.components.status.bar.tooltip.0d8d7cfe15',
+-          'Waiting for Claude session'
++          'auto.components.status.bar.tooltip.claude.deferredRefresh.label',
++          'Waiting for credential refresh'
++        )
++      case 'rate-limited':
++        return translate(
++          'auto.components.status.bar.tooltip.claude.rateLimitedRead.label',
++          'Refresh rate limited'
+         )
+       case 'stale-token':
+       case 'refreshable-credentials-without-token':
+@@ -108,7 +116,6 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+       case 'missing-scope':
+       case 'no-subscription':
+       case 'parse':
+-      case 'rate-limited':
+       case 'server':
+       case 'unknown':
+       case undefined:
+@@ -134,7 +141,11 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+     )
+   }
+   if (isUsageRateLimitError(p.error)) {
+-    return translate('auto.components.status.bar.tooltip.7ad719c4bf', 'Limited')
++    // Why: what hit a limit is Orca's usage read, not necessarily the user's plan.
++    return translate(
++      'auto.components.status.bar.tooltip.refreshRateLimited.label',
++      'Refresh rate limited'
++    )
+   }
+   return translate('auto.components.status.bar.tooltip.e740f92596', 'Refresh failed')
+ }
+@@ -170,8 +181,13 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
+     switch (p.usageMetadata?.failureKind) {
+       case 'deferred-by-live-session':
+         return translate(
+-          'auto.components.status.bar.tooltip.3d3c9c0c1f',
+-          'Claude usage will refresh after the live Claude terminal rotates its credentials.'
++          'auto.components.status.bar.tooltip.claude.deferredRefresh.detail',
++          'Claude usage refreshes once this account finishes rotating its credentials.'
++        )
++      case 'rate-limited':
++        return translate(
++          'auto.components.status.bar.tooltip.claude.rateLimitedRead.detail',
++          'Claude throttled the usage read itself. This does not mean your subscription quota is spent.'
+         )
+       case 'stale-token':
+       case 'refreshable-credentials-without-token':
+@@ -202,7 +218,6 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
+         )
+       case 'missing-credentials':
+       case 'no-subscription':
+-      case 'rate-limited':
+       case 'unknown':
+       case undefined:
+         break
+diff --git a/src/renderer/src/components/status-bar/usage-provider-settings-target.ts b/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
+index 39380e135950c9f66c00f1d94bb5ed3198ad97c2..3052279c641a0f8e6fbfad3d1086d2d0d412f783 100644
+--- a/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
++++ b/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
+@@ -23,5 +23,8 @@ export function getUsageProviderAccountsSectionId(
+     case 'kimi':
+       // Why: Orca must not mutate Kimi's CLI-owned credential lifecycle.
+       return null
++    case 'qwencloud':
++      // Why: codexbar-metered providers are read-only — Orca owns no sign-in for them.
++      return null
+   }
+ }
+diff --git a/src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx b/src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..577de1dc26a2ce016b825d8329c9f24e037d13fc
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx
+@@ -0,0 +1,143 @@
++// @vitest-environment happy-dom
++
++import { renderToStaticMarkup } from 'react-dom/server'
++import { describe, expect, it, vi } from 'vitest'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++
++vi.mock('@/i18n/i18n', () => ({
++  i18n: { language: 'en' },
++  translate: (_key: string, fallback: string, values?: Record<string, string>) =>
++    values ? fallback.replace(/\{\{(\w+)\}\}/g, (_m, k) => values[k] ?? '') : fallback
++}))
++
++vi.mock('@/lib/agent-catalog', () => ({
++  AgentIcon: () => null
++}))
++
++// The panel's rows are dropdown items; render them as plain nodes so the popover
++// markup can be asserted without a Radix menu host.
++vi.mock('@/components/ui/dropdown-menu', () => ({
++  DropdownMenuItem: ({
++    children,
++    onSelect: _onSelect,
++    ...props
++  }: React.PropsWithChildren<{ onSelect?: () => void }>) => <div {...props}>{children}</div>
++}))
++
++import { TooltipProvider } from '@/components/ui/tooltip'
++import { UsageRosterPanel } from './UsageRosterPanel'
++import type { UsageBarSegment } from './usage-account-segments'
++function claude(usedPercent: number | null): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session:
++      usedPercent === null
++        ? null
++        : { usedPercent, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: null,
++    status: usedPercent === null ? 'unavailable' : 'ok'
++  }
++}
++
++function render(segments: UsageBarSegment[]): string {
++  return renderToStaticMarkup(
++    <TooltipProvider>
++      <UsageRosterPanel
++        segments={segments}
++        display="used"
++        statusBarUsageMode="compact"
++        onStatusBarUsageModeChange={() => {}}
++        isRefreshing={false}
++        onRefresh={() => {}}
++        onOpenProvider={() => {}}
++        onSignIn={() => {}}
++        canSignIn={() => false}
++        onManageAccounts={() => {}}
++        onUsageDetails={() => {}}
++      />
++    </TooltipProvider>
++  )
++}
++
++describe('UsageRosterPanel account rows', () => {
++  // Why: the bar only has room for an ordinal. Without the identity in the popover there is no
++  // surface anywhere that says whose quota a meter belongs to.
++  it('names the account on every lane of a multi-account provider', () => {
++    const markup = render([
++      {
++        key: 'claude:acc-1',
++        limits: claude(41),
++        badge: { ordinal: 1, email: 'goodluck.devv@gmail.com', isActive: true }
++      },
++      {
++        key: 'claude:acc-2',
++        limits: claude(87),
++        badge: { ordinal: 2, email: 'florian.seran@gmail.com', isActive: false }
++      }
++    ])
++
++    expect(markup).toContain('goodluck.devv@gmail.com')
++    expect(markup).toContain('florian.seran@gmail.com')
++    expect(markup).toContain('41%')
++    expect(markup).toContain('87%')
++  })
++
++  it('falls back to the ordinal when the account has no resolved email', () => {
++    const markup = render([
++      { key: 'claude:sd', limits: claude(5), badge: { ordinal: 1, email: null, isActive: true } },
++      {
++        key: 'claude:acc-2',
++        limits: claude(9),
++        badge: { ordinal: 2, email: null, isActive: false }
++      }
++    ])
++
++    expect(markup).toContain('account 1')
++    expect(markup).toContain('account 2')
++  })
++
++  it('adds no account label for a single-account provider', () => {
++    const markup = render([{ key: 'claude', limits: claude(41), badge: null }])
++
++    expect(markup).not.toContain('account 1')
++    expect(markup).not.toContain('@')
++  })
++
++  // Why: worst-first ordering must not reshuffle sibling lanes of one provider on every refresh.
++  it('orders tied lanes by ordinal', () => {
++    const markup = render([
++      {
++        key: 'claude:acc-2',
++        limits: claude(50),
++        badge: { ordinal: 2, email: 'b@x.com', isActive: false }
++      },
++      {
++        key: 'claude:acc-1',
++        limits: claude(50),
++        badge: { ordinal: 1, email: 'a@x.com', isActive: true }
++      }
++    ])
++
++    expect(markup.indexOf('a@x.com')).toBeLessThan(markup.indexOf('b@x.com'))
++  })
++
++  it('still renders an unmeasured lane as its own row', () => {
++    const markup = render([
++      {
++        key: 'claude:acc-1',
++        limits: claude(41),
++        badge: { ordinal: 1, email: 'a@x.com', isActive: true }
++      },
++      {
++        key: 'claude:acc-2',
++        limits: claude(null),
++        badge: { ordinal: 2, email: 'b@x.com', isActive: false }
++      }
++    ])
++
++    expect(markup).toContain('a@x.com')
++    expect(markup).toContain('b@x.com')
++  })
++})
+diff --git a/src/renderer/src/components/status-bar/usage-roster-row-state.test.ts b/src/renderer/src/components/status-bar/usage-roster-row-state.test.ts
+index b63a9a3ad5b11c720eb537a5db1e9a28d347e677..485fc891321be76531141f908d7caa5ff0f5eb84 100644
+--- a/src/renderer/src/components/status-bar/usage-roster-row-state.test.ts
++++ b/src/renderer/src/components/status-bar/usage-roster-row-state.test.ts
+@@ -95,10 +95,56 @@ describe('getUsageRosterRowState', () => {
+     })
+   })
+ 
+-  it('lets real usage data win over a stale error status', () => {
+-    expect(getUsageRosterRowState(provider({ status: 'error' }), true)).toEqual({
++  // Why: retained numbers from the last successful capture are still worth showing, but a row
++  // that shows them while the refresh is failing must say so — silently rendering them as a
++  // healthy reading is the dishonest case this replaces.
++  it('keeps retained usage visible but labels it as a failed refresh', () => {
++    expect(
++      getUsageRosterRowState(
++        provider({ status: 'error', usageMetadata: { failureKind: 'rate-limited' } }),
++        true
++      )
++    ).toEqual({ kind: 'stale-usage', statusLabel: 'Refresh rate limited' })
++  })
++
++  it('reports fresh data with no status label', () => {
++    expect(getUsageRosterRowState(provider({ status: 'ok' }), true)).toEqual({
++      kind: 'usage',
++      statusLabel: null
++    })
++  })
++
++  it('does not label a plain refetch over existing data as stale', () => {
++    expect(getUsageRosterRowState(provider({ status: 'fetching', error: null }), true)).toEqual({
+       kind: 'usage',
+       statusLabel: null
+     })
+   })
++
++  // Why: the store overlays `status: 'fetching'` on the failed sample while the retry is in
++  // flight, keeping its error and windows. Keying staleness on status alone made the row flip
++  // back to a clean reading for the whole round trip.
++  it('stays stale while a retry runs over a retained failed sample', () => {
++    expect(
++      getUsageRosterRowState(
++        provider({
++          status: 'fetching',
++          error: 'HTTP 429 from the Claude usage endpoint',
++          usageMetadata: { failureKind: 'rate-limited' }
++        }),
++        true
++      )
++    ).toEqual({ kind: 'stale-usage', statusLabel: 'Refresh rate limited' })
++  })
++
++  // Why: a revoked lane that still has yesterday's numbers needs the sign-in route, not just
++  // a failure label it cannot act on.
++  it('keeps the sign-in route for a revoked lane that still has retained numbers', () => {
++    expect(
++      getUsageRosterRowState(
++        provider({ status: 'error', usageMetadata: { failureKind: 'missing-credentials' } }),
++        true
++      )
++    ).toEqual({ kind: 'sign-in', statusLabel: 'not signed in' })
++  })
+ })
+diff --git a/src/renderer/src/components/status-bar/usage-roster-row-state.ts b/src/renderer/src/components/status-bar/usage-roster-row-state.ts
+index 68762327599411304432f347ca19a6fd04941c52..7594c7f1e4a24be7a90eb144344c26fe3d7f122c 100644
+--- a/src/renderer/src/components/status-bar/usage-roster-row-state.ts
++++ b/src/renderer/src/components/status-bar/usage-roster-row-state.ts
+@@ -1,9 +1,10 @@
+ import { translate } from '@/i18n/i18n'
+ import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
+ import { getProviderUsageStatusLabel } from './usage-error-copy'
++import { isProviderRefreshFailing } from './usage-stale-sample'
+ 
+ export type UsageRosterRowState = {
+-  kind: 'usage' | 'loading' | 'sign-in' | 'unavailable' | 'error' | 'empty'
++  kind: 'usage' | 'stale-usage' | 'loading' | 'sign-in' | 'unavailable' | 'error' | 'empty'
+   statusLabel: string | null
+ }
+ 
+@@ -34,8 +35,22 @@ export function getUsageRosterRowState(
+   provider: ProviderRateLimits,
+   hasUsage: boolean
+ ): UsageRosterRowState {
++  // A revoked lane keeps its sign-in route even when an older sample is still on screen.
++  if (isConfirmedSignedOut(provider)) {
++    return {
++      kind: 'sign-in',
++      statusLabel: translate(
++        'auto.components.status.bar.UsageRosterPanel.notSignedIn',
++        'not signed in'
++      )
++    }
++  }
+   if (hasUsage) {
+-    return { kind: 'usage', statusLabel: null }
++    // Retained numbers from an earlier capture stay visible, but a failing refresh must be
++    // named on the row: rendering them bare would assert a reading Orca does not have.
++    return isProviderRefreshFailing(provider)
++      ? { kind: 'stale-usage', statusLabel: getProviderUsageStatusLabel(provider) }
++      : { kind: 'usage', statusLabel: null }
+   }
+   if (provider.status === 'idle' || provider.status === 'fetching') {
+     return {
+@@ -46,15 +61,6 @@ export function getUsageRosterRowState(
+       )
+     }
+   }
+-  if (isConfirmedSignedOut(provider)) {
+-    return {
+-      kind: 'sign-in',
+-      statusLabel: translate(
+-        'auto.components.status.bar.UsageRosterPanel.notSignedIn',
+-        'not signed in'
+-      )
+-    }
+-  }
+   if (provider.status === 'error') {
+     return { kind: 'error', statusLabel: getProviderUsageStatusLabel(provider) }
+   }
+diff --git a/src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx b/src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..283c374f62126a0abb77a4be87f3e6315ef6ad0c
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx
+@@ -0,0 +1,244 @@
++// @vitest-environment happy-dom
++
++import { renderToStaticMarkup } from 'react-dom/server'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
++
++vi.mock('@/i18n/i18n', () => ({
++  i18n: { language: 'en' },
++  translate: (_key: string, fallback: string, values?: Record<string, string>) =>
++    values ? fallback.replace(/\{\{(\w+)\}\}/g, (_m, k) => values[k] ?? '') : fallback
++}))
++
++vi.mock('@/lib/agent-catalog', () => ({
++  AgentIcon: () => null
++}))
++
++vi.mock('@/components/ui/dropdown-menu', () => ({
++  DropdownMenuItem: ({
++    children,
++    onSelect: _onSelect,
++    ...props
++  }: React.PropsWithChildren<{ onSelect?: () => void }>) => <div {...props}>{children}</div>
++}))
++
++import { TooltipProvider } from '@/components/ui/tooltip'
++import { UsageRosterPanel } from './UsageRosterPanel'
++
++const NOW = Date.parse('2026-09-11T12:00:00Z')
++
++function window(overrides: Partial<RateLimitWindow> = {}): RateLimitWindow {
++  return {
++    usedPercent: 41,
++    windowMinutes: 300,
++    resetsAt: null,
++    resetDescription: null,
++    ...overrides
++  }
++}
++
++function claude(overrides: Partial<ProviderRateLimits> = {}): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: null,
++    weekly: null,
++    updatedAt: 0,
++    error: null,
++    status: 'ok',
++    ...overrides
++  }
++}
++
++function renderPanel(limits: ProviderRateLimits, canSignIn: boolean): string {
++  return renderToStaticMarkup(
++    <TooltipProvider>
++      <UsageRosterPanel
++        segments={[{ key: 'claude:acc-1', limits, badge: null }]}
++        display="used"
++        statusBarUsageMode="verbose"
++        onStatusBarUsageModeChange={() => {}}
++        isRefreshing={false}
++        onRefresh={() => {}}
++        onOpenProvider={() => {}}
++        onSignIn={() => {}}
++        canSignIn={() => canSignIn}
++        onManageAccounts={() => {}}
++        onUsageDetails={() => {}}
++      />
++    </TooltipProvider>
++  )
++}
++
++function render(limits: ProviderRateLimits): string {
++  return renderPanel(limits, false)
++}
++
++function renderWithSignIn(limits: ProviderRateLimits): string {
++  return renderPanel(limits, true)
++}
++
++beforeEach(() => {
++  vi.useFakeTimers()
++  vi.setSystemTime(NOW)
++})
++
++afterEach(() => {
++  vi.useRealTimers()
++})
++
++describe('UsageRosterPanel rows under a failed Claude refresh', () => {
++  // Why: the whole point of retaining the previous sample is that the old number still helps.
++  // It only helps if the row also says the number is old and the refresh failed.
++  it('keeps the retained percentage and dates it next to the failure label', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW + 2 * 3_600_000 }),
++        status: 'error',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: NOW - 12 * 60_000,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).toContain('41%')
++    expect(markup).toContain('Refresh rate limited')
++    expect(markup).toContain('last read 12m ago')
++  })
++
++  // Why: retention has a deadline; past it the windows are cleared and the row must admit it
++  // has no reading at all rather than inventing one.
++  it('admits it has no earlier reading when a retained sample is dated to nothing', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW + 2 * 3_600_000 }),
++        status: 'error',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: 0,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).toContain('41%')
++    expect(markup).toContain('Refresh rate limited')
++    expect(markup).toContain('no earlier reading')
++    expect(markup).not.toContain('last read')
++  })
++
++  it('shows no percentage at all when the windows were cleared', () => {
++    const markup = render(
++      claude({
++        status: 'error',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: 0,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).toContain('Refresh rate limited')
++    expect(markup).not.toMatch(/>\d+%</)
++  })
++
++  // Why: the store overlays `status: 'fetching'` on the retained failed sample for the whole
++  // retry round trip. Keying on status alone flipped the row back to a clean reading.
++  it('stays stale while the retry is in flight over the retained sample', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW + 2 * 3_600_000 }),
++        status: 'fetching',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: NOW - 12 * 60_000,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).toContain('41%')
++    expect(markup).toContain('Refresh rate limited')
++    expect(markup).toContain('last read 12m ago')
++  })
++
++  it('still withholds an expired window while the retry is in flight', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 63, resetsAt: NOW - 60_000 }),
++        status: 'fetching',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: NOW - 20 * 3_600_000,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).not.toContain('63%')
++    expect(markup).toContain('—')
++  })
++
++  // Why: a lane whose credentials were revoked keeps its retained numbers, but the row must
++  // still offer the way out.
++  it('offers sign-in on a revoked lane that still shows retained numbers', () => {
++    const markup = renderWithSignIn(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW + 2 * 3_600_000 }),
++        status: 'error',
++        error: 'Claude credentials are missing.',
++        updatedAt: NOW - 3 * 3_600_000,
++        usageMetadata: { failureKind: 'missing-credentials' }
++      })
++    )
++
++    expect(markup).toContain('41%')
++    expect(markup).toContain('not signed in')
++    expect(markup).toContain('Sign in')
++    expect(markup).toContain('last read 3h ago')
++  })
++
++  // Why: a retained window whose reset already passed measures a quota period that no longer
++  // exists; printing its percentage would assert a fresh reading Orca does not have.
++  it('withholds the number of a retained window whose reset already passed', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW - 60_000 }),
++        status: 'error',
++        error: 'Claude rate limited the usage refresh.',
++        updatedAt: NOW - 26 * 3_600_000,
++        usageMetadata: { failureKind: 'rate-limited' }
++      })
++    )
++
++    expect(markup).not.toContain('41%')
++    expect(markup).toContain('—')
++    expect(markup).toContain('Refresh rate limited')
++  })
++
++  it('leaves a healthy account reading exactly as it was', () => {
++    const markup = render(
++      claude({
++        session: window({ usedPercent: 41, resetsAt: NOW + 2 * 3_600_000 }),
++        status: 'ok',
++        updatedAt: NOW - 12 * 60_000
++      })
++    )
++
++    expect(markup).toContain('41%')
++    expect(markup).not.toContain('Refresh rate limited')
++    expect(markup).not.toContain('last read')
++  })
++
++  // Why: with per-account credentials, the deferral is about one account's credential rotation,
++  // not about the user opening some Claude session somewhere.
++  it('describes a deferred refresh as waiting for credentials, not as a chore for the user', () => {
++    const markup = render(
++      claude({
++        status: 'error',
++        error:
++          'Claude usage refresh is waiting for the live Claude terminal to rotate its credentials.',
++        updatedAt: 0,
++        usageMetadata: {
++          failureKind: 'deferred-by-live-session',
++          deferredByLiveClaudeSession: true
++        }
++      })
++    )
++
++    expect(markup).toContain('Waiting for credential refresh')
++    expect(markup).not.toContain('terminal')
++  })
++})
+diff --git a/src/renderer/src/components/status-bar/usage-stale-sample.test.ts b/src/renderer/src/components/status-bar/usage-stale-sample.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d8008a968fde99618dbf1429f0080b4a26a3c473
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-stale-sample.test.ts
+@@ -0,0 +1,110 @@
++import { describe, expect, it, vi } from 'vitest'
++import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
++
++vi.mock('@/i18n/i18n', () => ({
++  translate: (_key: string, fallback: string, values?: Record<string, string>) =>
++    values ? fallback.replace(/\{\{(\w+)\}\}/g, (_m, k) => values[k] ?? '') : fallback
++}))
++
++import {
++  getRetainedSampleNotice,
++  getUsageRetryCountdownLabel,
++  isUsageWindowExpired
++} from './usage-stale-sample'
++
++const NOW = Date.parse('2026-09-11T12:00:00Z')
++
++function provider(overrides: Partial<ProviderRateLimits> = {}): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: null,
++    weekly: null,
++    updatedAt: 0,
++    error: 'Claude rate limited the usage refresh.',
++    status: 'error',
++    ...overrides
++  }
++}
++
++function window(overrides: Partial<RateLimitWindow> = {}): RateLimitWindow {
++  return {
++    usedPercent: 41,
++    windowMinutes: 300,
++    resetsAt: null,
++    resetDescription: null,
++    ...overrides
++  }
++}
++
++describe('getRetainedSampleNotice', () => {
++  it('dates the retained numbers by their last successful capture', () => {
++    expect(getRetainedSampleNotice(provider({ updatedAt: NOW - 12 * 60_000 }), NOW)).toBe(
++      'last read 12m ago'
++    )
++    expect(getRetainedSampleNotice(provider({ updatedAt: NOW - 5 * 3_600_000 }), NOW)).toBe(
++      'last read 5h ago'
++    )
++  })
++
++  it('says a capture just happened rather than printing a zero age', () => {
++    expect(getRetainedSampleNotice(provider({ updatedAt: NOW - 5_000 }), NOW)).toBe(
++      'last read just now'
++    )
++  })
++
++  it('admits there is no earlier reading when nothing was ever captured', () => {
++    // Why: updatedAt is 0 on a provider that has never returned data; an age
++    // computed from the epoch would claim a 56-year-old sample.
++    expect(getRetainedSampleNotice(provider({ updatedAt: 0 }), NOW)).toBe('no earlier reading')
++    expect(getRetainedSampleNotice(provider({ updatedAt: Number.NaN }), NOW)).toBe(
++      'no earlier reading'
++    )
++  })
++
++  it('does not report a capture from the future as an age', () => {
++    expect(getRetainedSampleNotice(provider({ updatedAt: NOW + 60_000 }), NOW)).toBe(
++      'no earlier reading'
++    )
++  })
++})
++
++describe('isUsageWindowExpired', () => {
++  it('treats a window whose reset has already passed as expired', () => {
++    expect(isUsageWindowExpired(window({ resetsAt: NOW - 1 }), NOW)).toBe(true)
++    expect(isUsageWindowExpired(window({ resetsAt: NOW }), NOW)).toBe(true)
++  })
++
++  it('keeps a still-open window unexpired', () => {
++    expect(isUsageWindowExpired(window({ resetsAt: NOW + 60_000 }), NOW)).toBe(false)
++  })
++
++  it('cannot call a window with no known reset expired', () => {
++    expect(isUsageWindowExpired(window({ resetsAt: null }), NOW)).toBe(false)
++  })
++})
++
++describe('getUsageRetryCountdownLabel', () => {
++  it('reports the provider-supplied retry deadline as a countdown', () => {
++    expect(
++      getUsageRetryCountdownLabel(
++        provider({ usageMetadata: { failureKind: 'rate-limited', retryAtMs: NOW + 90 * 60_000 } }),
++        NOW
++      )
++    ).toBe('retry in 1h 30m')
++  })
++
++  it('stays silent when the response carried no Retry-After', () => {
++    expect(
++      getUsageRetryCountdownLabel(provider({ usageMetadata: { failureKind: 'rate-limited' } }), NOW)
++    ).toBeNull()
++  })
++
++  it('stays silent once the retry deadline has passed', () => {
++    expect(
++      getUsageRetryCountdownLabel(
++        provider({ usageMetadata: { failureKind: 'rate-limited', retryAtMs: NOW - 1 } }),
++        NOW
++      )
++    ).toBeNull()
++  })
++})
+diff --git a/src/renderer/src/components/status-bar/usage-stale-sample.ts b/src/renderer/src/components/status-bar/usage-stale-sample.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..dad388d4c0b91f5363e8b240c61770a2a8bd17c1
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-stale-sample.ts
+@@ -0,0 +1,72 @@
++import { translate } from '@/i18n/i18n'
++import { formatShortTimeAgo } from '@/lib/short-time-ago'
++import { formatResetDuration } from '../../../../shared/rate-limit-reset-format'
++import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
++
++// A failing refresh keeps the previous sample on screen; `updatedAt` then dates that sample
++// rather than the failed attempt. These helpers keep the row honest about which it is showing.
++
++function getSampleAgeLabel(p: ProviderRateLimits, now: number): string | null {
++  const capturedAt = p.updatedAt
++  // updatedAt is 0 on a provider that never returned data; an age from the epoch would
++  // claim a decades-old sample, and a future timestamp is a clock skew we cannot date.
++  if (!Number.isFinite(capturedAt) || capturedAt <= 0 || capturedAt > now) {
++    return null
++  }
++  return formatShortTimeAgo(capturedAt, now)
++}
++
++/** Dates the numbers a stale row is still showing, or says there are none to date. */
++export function getRetainedSampleNotice(p: ProviderRateLimits, now: number): string {
++  const age = getSampleAgeLabel(p, now)
++  if (age === null) {
++    return translate(
++      'auto.components.status.bar.UsageRosterPanel.stale.noSample',
++      'no earlier reading'
++    )
++  }
++  if (age === 'now') {
++    return translate(
++      'auto.components.status.bar.UsageRosterPanel.stale.justRead',
++      'last read just now'
++    )
++  }
++  return translate(
++    'auto.components.status.bar.UsageRosterPanel.stale.lastRead',
++    'last read {{age}} ago',
++    { age }
++  )
++}
++
++/**
++ * True when a window's reset has already passed: it measured a quota period that no longer
++ * exists, so its percentage cannot be shown as a reading whatever the refresh is doing.
++ */
++export function isUsageWindowExpired(window: RateLimitWindow, now: number): boolean {
++  return (
++    typeof window.resetsAt === 'number' &&
++    Number.isFinite(window.resetsAt) &&
++    window.resetsAt <= now
++  )
++}
++
++/**
++ * True while a refresh is failing — including the retry in flight, which the store overlays as
++ * `fetching` on the failed sample without clearing its error.
++ */
++export function isProviderRefreshFailing(p: ProviderRateLimits): boolean {
++  return p.status === 'error' || (p.status === 'fetching' && p.error !== null)
++}
++
++/** Countdown to the provider-supplied Retry-After deadline, when one was sent. */
++export function getUsageRetryCountdownLabel(p: ProviderRateLimits, now: number): string | null {
++  const retryAtMs = p.usageMetadata?.retryAtMs
++  if (typeof retryAtMs !== 'number' || !Number.isFinite(retryAtMs) || retryAtMs <= now) {
++    return null
++  }
++  return translate(
++    'auto.components.status.bar.UsageRosterPanel.stale.retryIn',
++    'retry in {{countdown}}',
++    { countdown: formatResetDuration(retryAtMs - now) }
++  )
++}
+diff --git a/src/renderer/src/components/status-bar/use-status-bar-controller.ts b/src/renderer/src/components/status-bar/use-status-bar-controller.ts
+index b7f57c7f1e7b950c82cd25e6bf2d5f26a11a82df..f0d975fdc55fd8d7de86f69a73d469b7c8fc131b 100644
+--- a/src/renderer/src/components/status-bar/use-status-bar-controller.ts
++++ b/src/renderer/src/components/status-bar/use-status-bar-controller.ts
+@@ -10,6 +10,7 @@ import { getVisibleUsageProvider, isUsageEmptyState } from './status-bar-provide
+ import { getUsageProviderAccountsSectionId } from './usage-provider-settings-target'
+ import { CLOSE_ALL_CONTEXT_MENUS_EVENT, useStatusBarMenuFocusHandoff } from './ProviderDetailsMenu'
+ import { observeStatusBarContainer } from './status-bar-container-observer'
++import { buildStatusBarUsageBarSegments } from './usage-account-segments'
+ 
+ export function useStatusBarController(floatingTerminalOpen: boolean) {
+   const floatingTerminalShortcut = useShortcutLabel('floatingTerminal.toggle')
+@@ -100,6 +101,7 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+   }
+ 
+   const { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor } = rateLimits
++  const { qwencloud } = rateLimits
+ 
+   // Why: a bar is earned by a live snapshot or durable Settings setup; detection-gating hides per-CLI bars when the agent isn't on PATH.
+   // Why: Antigravity has no persisted credential, so a checked status item + detected CLI is the durable "show its slot" signal.
+@@ -115,7 +117,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     minimaxApiKeyConfigured: rateLimits.minimaxApiKeyConfigured,
+     opencodeGoApiKeyConfigured: rateLimits.opencodeGoApiKeyConfigured,
+     grokAuthConfigured: rateLimits.grokAuthConfigured,
+-    cursorAuthConfigured: rateLimits.cursorAuthConfigured
++    cursorAuthConfigured: rateLimits.cursorAuthConfigured,
++    codexbarAvailable: rateLimits.codexbarAvailable
+   }
+   const visibleClaude = getVisibleUsageProvider('claude', claude, usageSettings)
+   const visibleCodex = getVisibleUsageProvider('codex', codex, usageSettings)
+@@ -157,6 +160,9 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+   // Why: OpenCode Go is web/cookie-auth, not a CLI on PATH, so detection-gating doesn't apply.
+   const visibleOpencodeGo = getVisibleUsageProvider('opencode-go', opencodeGo, usageSettings)
+   const showOpencodeGo = visibleOpencodeGo !== null && statusBarItems.includes('opencode-go')
++  // Why: codexbar meters Qwen Cloud from one external binary, not a CLI on PATH, so detection-gating doesn't apply.
++  const visibleQwenCloud = getVisibleUsageProvider('qwencloud', qwencloud, usageSettings)
++  const showQwenCloud = visibleQwenCloud !== null && statusBarItems.includes('qwencloud')
+   const showSsh = statusBarItems.includes('ssh')
+   const showResourceUsage = statusBarItems.includes('resource-usage')
+   const showPorts = statusBarItems.includes('ports')
+@@ -172,11 +178,23 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     showAntigravity ||
+     showMiniMax ||
+     showGrok ||
+-    showCursor
++    showCursor ||
++    showQwenCloud
+   const anyVisible = hasVisibleUsageMeters || showResourceUsage
+   // Why: include Settings so durable managed accounts count — a configured user isn't shown the empty state while snapshots hydrate.
+   const isEmptyUsageState = isUsageEmptyState(
+-    { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor },
++    {
++      claude,
++      codex,
++      gemini,
++      opencodeGo,
++      kimi,
++      antigravity,
++      minimax,
++      grok,
++      cursor,
++      qwencloud
++    },
+     usageSettings
+   )
+   // Why: one-time nudge — once dismissed, stays hidden even if providers reconnect later.
+@@ -190,7 +208,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     antigravity?.status === 'fetching' ||
+     minimax?.status === 'fetching' ||
+     grok?.status === 'fetching' ||
+-    cursor?.status === 'fetching'
++    cursor?.status === 'fetching' ||
++    qwencloud?.status === 'fetching'
+ 
+   const compact = containerWidth < 900
+   const iconOnly = containerWidth < 500
+@@ -210,8 +229,33 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     showKimi ? visibleKimi : null,
+     showMiniMax ? visibleMiniMax : null,
+     showGrok ? visibleGrok : null,
+-    showCursor ? visibleCursor : null
++    showCursor ? visibleCursor : null,
++    showQwenCloud ? visibleQwenCloud : null
+   ].filter((p): p is ProviderRateLimits => p !== null)
++  const usageBarSegments = buildStatusBarUsageBarSegments({
++    providers: rosterProviders,
++    hideAccountRoster: Boolean(settings?.activeRuntimeEnvironmentId?.trim()),
++    claude: showClaude
++      ? {
++          activeAccountId: rateLimits.activeClaudeAccountId,
++          systemDefault: rateLimits.claudeSystemDefault,
++          managedAccounts: settings?.claudeManagedAccounts ?? [],
++          activeLimits: visibleClaude,
++          providerLimits: claude,
++          inactive: rateLimits.inactiveClaudeAccounts
++        }
++      : null,
++    codex: showCodex
++      ? {
++          activeAccountId: rateLimits.activeCodexAccountId,
++          systemDefault: rateLimits.codexSystemDefault,
++          managedAccounts: settings?.codexManagedAccounts ?? [],
++          activeLimits: visibleCodex,
++          providerLimits: codex,
++          inactive: rateLimits.inactiveCodexAccounts
++        }
++      : null
++  })
+ 
+   const handleManageAccounts = (): void => {
+     setUsageMenuOpen(false)
+@@ -261,7 +305,7 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     menuPoint,
+     petEnabled,
+     recordFeatureInteraction,
+-    rosterProviders,
++    usageBarSegments,
+     setMenuOpen,
+     setMenuPoint,
+     setStatusBarUsageMode,
+diff --git a/src/renderer/src/i18n/locales/en.json b/src/renderer/src/i18n/locales/en.json
+index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba96db743e 100644
+--- a/src/renderer/src/i18n/locales/en.json
++++ b/src/renderer/src/i18n/locales/en.json
+@@ -151,7 +151,8 @@
+         "portsToggleDescription": "Show live workspace ports. Click it for workspace-scoped ports and external listeners.",
+         "antigravityToggleDescription": "Show Antigravity subscription usage for the active workspace.",
+         "grokToggleDescription": "Show Grok subscription credit usage when signed in via Grok CLI.",
+-        "cursorToggleDescription": "Show Cursor plan usage when signed in through cursor-agent or Cursor IDE."
++        "cursorToggleDescription": "Show Cursor plan usage when signed in through cursor-agent or Cursor IDE.",
++        "qwenCloudToggleDescription": "Show Qwen Cloud subscription usage reported by the CodexBar CLI."
+       },
+       "menuBarIcon": {
+         "title": "Show Menu Bar Icon",
+@@ -3814,10 +3815,11 @@
+             "antigravityUsageDetails": "Open Antigravity usage details",
+             "grokUsageAria": "Open Grok usage details",
+             "grokUsageMenu": "Grok Usage",
++            "cursorUsageMenu": "Cursor Usage",
++            "qwenCloudUsageMenu": "Qwen Cloud Usage",
+             "floatingTerminalNewActivity": "{{label}}, new activity",
+             "codexSignInSuccess": "Signed in to Codex",
+-            "codexSignInError": "Codex sign-in failed. Please try again.",
+-            "cursorUsageMenu": "Cursor Usage"
++            "codexSignInError": "Codex sign-in failed. Please try again."
+           },
+           "StatusBarUsageEmptyCta": {
+             "828c764a79": "Connect an account",
+@@ -3973,8 +3975,6 @@
+             "2c35eca8d4": "Unable to fetch usage",
+             "1292d4f2ee": "Unavailable",
+             "7567cd1c6b": "Usage unavailable",
+-            "a9a318b7a3": "Refresh failed — showing cached data",
+-            "7ad719c4bf": "Limited",
+             "e740f92596": "Refresh failed",
+             "8418ec448d": "{{value0}} usage could not be refreshed. Agent sessions may still be signed in.",
+             "45198c7d95": "1 rate-limit reset available",
+@@ -3983,12 +3983,10 @@
+             "d1e442a9e5": "Expires now",
+             "6cf9eaed10": "Next expires in {{value0}}",
+             "20ad66aed1": "Expires in {{value0}}",
+-            "0d8d7cfe15": "Waiting for Claude session",
+             "1804cd8c3f": "Refreshing sign-in",
+             "f8f0f9d8cc": "Network issue",
+             "bf2e739f18": "Sign-in unavailable",
+             "f8b8dbed85": "Usage unavailable",
+-            "3d3c9c0c1f": "Claude usage will refresh after the live Claude terminal rotates its credentials.",
+             "42fdd4da1d": "Claude sign-in is being refreshed. Agent sessions may still be signed in.",
+             "c06c1d215d": "Claude usage could not be refreshed because the network request failed.",
+             "cabdc2a9e0": "Claude sign-in credentials could not be read.",
+@@ -4004,6 +4002,20 @@
+                 "cookie": "MiniMax session cookie expired. Replace it in Settings."
+               }
+             },
++            "claude": {
++              "deferredRefresh": {
++                "label": "Waiting for credential refresh",
++                "detail": "Claude usage refreshes once this account finishes rotating its credentials."
++              },
++              "rateLimitedRead": {
++                "label": "Refresh rate limited",
++                "detail": "Claude throttled the usage read itself. This does not mean your subscription quota is spent."
++              }
++            },
++            "refreshRateLimited": {
++              "label": "Refresh rate limited"
++            },
++            "staleCachedLabel": "{{label}} — showing cached data",
+             "usage": {
+               "noSubscription": {
+                 "label": "No subscription"
+@@ -4044,7 +4056,14 @@
+             "compact": "Compact",
+             "detailedTooltip": "Full usage with bars, labels, and percentages",
+             "compactTooltip": "Condensed usage: only the tightest window",
+-            "footerDetailAria": "Usage footer detail"
++            "footerDetailAria": "Usage footer detail",
++            "stale": {
++              "noSample": "no earlier reading",
++              "justRead": "last read just now",
++              "lastRead": "last read {{age}} ago",
++              "retryIn": "retry in {{countdown}}"
++            },
++            "accountOrdinal": "account {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "Updating {{value0}}/{{value1}}",
+@@ -9352,6 +9371,11 @@
+             "e7d1b0f3a5": "Show Grok weekly credit usage from Grok CLI OAuth.",
+             "d6c0a9e2f4": "grok",
+             "c5b9f8d1e3": "xai",
++            "c5d3e29b74": "Qwen Cloud Usage",
++            "3da17692eb": "Show Qwen Cloud subscription usage in the status bar.",
++            "4eb287a3fc": "qwen",
++            "5fc398b40d": "alibaba",
++            "2cf90681da": "codexbar",
+             "usagePercentageDisplayTitle": "Usage percentages",
+             "usagePercentageDisplayDescription": "Choose whether provider limits show the percentage used or remaining.",
+             "tray": {
+diff --git a/src/renderer/src/i18n/locales/es.json b/src/renderer/src/i18n/locales/es.json
+index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712f47c9d5a 100644
+--- a/src/renderer/src/i18n/locales/es.json
++++ b/src/renderer/src/i18n/locales/es.json
+@@ -35,7 +35,8 @@
+         "portsToggleDescription": "Muestra los puertos activos de los espacios de trabajo. Haz clic para ver los puertos de cada espacio de trabajo y los puertos externos.",
+         "antigravityToggleDescription": "Muestra el uso de suscripción de Antigravity para el espacio de trabajo activo.",
+         "grokToggleDescription": "Muestra el uso de créditos de suscripción de Grok cuando has iniciado sesión con Grok CLI.",
+-        "cursorToggleDescription": "Muestra el uso del plan de Cursor cuando inicias sesión con cursor-agent o el IDE de Cursor."
++        "cursorToggleDescription": "Muestra el uso del plan de Cursor cuando inicias sesión con cursor-agent o el IDE de Cursor.",
++        "qwenCloudToggleDescription": "Muestra el uso de suscripción de Qwen Cloud informado por la CLI de CodexBar."
+       },
+       "menuBarIcon": {
+         "title": "Mostrar icono en la barra de menús",
+@@ -3339,10 +3340,11 @@
+             "antigravityUsageDetails": "Abrir detalles de uso de Antigravity",
+             "grokUsageAria": "Abrir detalles de uso de Grok",
+             "grokUsageMenu": "Uso de Grok",
++            "cursorUsageMenu": "Uso de Cursor",
++            "qwenCloudUsageMenu": "Uso de Qwen Cloud",
+             "floatingTerminalNewActivity": "{{label}}, nueva actividad",
+             "codexSignInSuccess": "Sesión iniciada en Codex",
+-            "codexSignInError": "No se pudo iniciar sesión en Codex. Inténtalo de nuevo.",
+-            "cursorUsageMenu": "Uso de Cursor"
++            "codexSignInError": "No se pudo iniciar sesión en Codex. Inténtalo de nuevo."
+           },
+           "StatusBarUsageEmptyCta": {
+             "828c764a79": "Conectar una cuenta",
+@@ -3482,8 +3484,6 @@
+             "2c35eca8d4": "No se pudo obtener el uso",
+             "1292d4f2ee": "No disponible",
+             "7567cd1c6b": "Uso no disponible",
+-            "a9a318b7a3": "Error al actualizar — mostrando datos en caché",
+-            "7ad719c4bf": "Limitado",
+             "e740f92596": "Error al actualizar",
+             "8418ec448d": "No se pudo actualizar el uso de {{value0}}. Es posible que las sesiones de agentes sigan iniciadas.",
+             "45198c7d95": "1 reset de rate limit disponible",
+@@ -3492,12 +3492,10 @@
+             "d1e442a9e5": "Vence ahora",
+             "6cf9eaed10": "El siguiente vence en {{value0}}",
+             "20ad66aed1": "Vence en {{value0}}",
+-            "0d8d7cfe15": "Esperando sesión de Claude",
+             "1804cd8c3f": "Actualizando inicio de sesión",
+             "f8f0f9d8cc": "Problema de red",
+             "bf2e739f18": "Inicio de sesión no disponible",
+             "f8b8dbed85": "Uso no disponible",
+-            "3d3c9c0c1f": "El uso de Claude se actualizará cuando el terminal Claude activo rote sus credenciales.",
+             "42fdd4da1d": "Se está actualizando el inicio de sesión de Claude. Las sesiones de agentes pueden seguir iniciadas.",
+             "c06c1d215d": "No se pudo actualizar el uso de Claude porque falló la solicitud de red.",
+             "cabdc2a9e0": "No se pudieron leer las credenciales de inicio de sesión de Claude.",
+@@ -3506,6 +3504,20 @@
+             "d1b7f509ac": "Run grok in a terminal on the computer running Orca and wait for it to start. If prompted, complete sign-in, then retry usage. You do not need to send a chat message.",
+             "f90b3d7a16": "Run Kimi to refresh",
+             "a37e8c15d4": "Run kimi in a terminal on the computer running Orca and wait for it to start, then retry usage.",
++            "claude": {
++              "deferredRefresh": {
++                "label": "Esperando la renovación de credenciales",
++                "detail": "El uso de Claude se actualizará cuando esta cuenta termine de rotar sus credenciales."
++              },
++              "rateLimitedRead": {
++                "label": "Actualización limitada por el servidor",
++                "detail": "Claude limitó la propia lectura del uso. Esto no significa que tu cuota de suscripción esté agotada."
++              }
++            },
++            "refreshRateLimited": {
++              "label": "Actualización limitada por el servidor"
++            },
++            "staleCachedLabel": "{{label}} — mostrando datos en caché",
+             "usage": {
+               "noSubscription": {
+                 "label": "Sin suscripción"
+@@ -3546,7 +3558,14 @@
+             "compact": "Compact",
+             "footerDetailAria": "Usage footer detail",
+             "detailedTooltip": "Uso completo con barras, etiquetas y porcentajes",
+-            "compactTooltip": "Uso condensado: sólo la ventana más estrecha"
++            "compactTooltip": "Uso condensado: sólo la ventana más estrecha",
++            "stale": {
++              "noSample": "sin lectura anterior",
++              "justRead": "última lectura ahora mismo",
++              "lastRead": "última lectura hace {{age}}",
++              "retryIn": "reintento en {{countdown}}"
++            },
++            "accountOrdinal": "cuenta {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "Updating {{value0}}/{{value1}}",
+@@ -8064,6 +8083,11 @@
+             "e7d1b0f3a5": "Muestra el uso semanal de créditos de Grok desde OAuth de Grok CLI.",
+             "d6c0a9e2f4": "grok",
+             "c5b9f8d1e3": "xai",
++            "c5d3e29b74": "Uso de Qwen Cloud",
++            "3da17692eb": "Muestra el uso de suscripción de Qwen Cloud en la barra de estado.",
++            "4eb287a3fc": "qwen",
++            "5fc398b40d": "alibaba",
++            "2cf90681da": "codexbar",
+             "usagePercentageDisplayTitle": "Porcentajes de uso",
+             "usagePercentageDisplayDescription": "Elige si los límites del proveedor muestran el porcentaje usado o restante.",
+             "cursor": {
+diff --git a/src/renderer/src/i18n/locales/fr.json b/src/renderer/src/i18n/locales/fr.json
+index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d4645ecfc84 100644
+--- a/src/renderer/src/i18n/locales/fr.json
++++ b/src/renderer/src/i18n/locales/fr.json
+@@ -3920,8 +3920,6 @@
+             "2c35eca8d4": "Impossible de récupérer l'utilisation",
+             "1292d4f2ee": "Indisponible",
+             "7567cd1c6b": "Utilisation indisponible",
+-            "a9a318b7a3": "Échec de l'actualisation — affichage des données en cache",
+-            "7ad719c4bf": "Limité",
+             "e740f92596": "Échec de l'actualisation",
+             "8418ec448d": "L'utilisation de {{value0}} n'a pas pu être actualisée. Des sessions d'agent sont peut-être encore connectées.",
+             "45198c7d95": "1 réinitialisation de limite de débit disponible",
+@@ -3930,12 +3928,10 @@
+             "d1e442a9e5": "Expire maintenant",
+             "6cf9eaed10": "La prochaine expire dans {{value0}}",
+             "20ad66aed1": "Expire dans {{value0}}",
+-            "0d8d7cfe15": "En attente d'une session Claude",
+             "1804cd8c3f": "Actualisation de la connexion",
+             "f8f0f9d8cc": "Problème de réseau",
+             "bf2e739f18": "Connexion indisponible",
+             "f8b8dbed85": "Utilisation indisponible",
+-            "3d3c9c0c1f": "L'utilisation de Claude s'actualisera une fois que le terminal Claude actif aura renouvelé ses identifiants.",
+             "42fdd4da1d": "La connexion Claude est en cours d'actualisation. Des sessions d'agent sont peut-être encore connectées.",
+             "c06c1d215d": "L'utilisation de Claude n'a pas pu être actualisée car la requête réseau a échoué.",
+             "cabdc2a9e0": "Les identifiants de connexion Claude n'ont pas pu être lus.",
+@@ -3944,6 +3940,20 @@
+             "d1b7f509ac": "Exécutez grok dans un terminal sur l'ordinateur qui fait tourner Orca et attendez son démarrage. Si demandé, terminez la connexion, puis réessayez l'utilisation. Inutile d'envoyer un message.",
+             "f90b3d7a16": "Exécutez Kimi pour actualiser",
+             "a37e8c15d4": "Exécutez kimi dans un terminal sur l'ordinateur qui fait tourner Orca et attendez son démarrage, puis réessayez l'utilisation.",
++            "claude": {
++              "deferredRefresh": {
++                "label": "En attente du renouvellement des identifiants",
++                "detail": "L'utilisation de Claude s'actualisera dès que ce compte aura renouvelé ses identifiants."
++              },
++              "rateLimitedRead": {
++                "label": "Actualisation limitée par le serveur",
++                "detail": "Claude a limité la lecture de l'utilisation elle-même. Cela ne signifie pas que votre quota d'abonnement est épuisé."
++              }
++            },
++            "refreshRateLimited": {
++              "label": "Actualisation limitée par le serveur"
++            },
++            "staleCachedLabel": "{{label}} — affichage des données en cache",
+             "minimax": {
+               "expired": {
+                 "label": "Connexion expirée",
+@@ -3991,7 +4001,14 @@
+             "compact": "Compact",
+             "detailedTooltip": "Utilisation complète avec barres, libellés et pourcentages",
+             "compactTooltip": "Utilisation condensée : uniquement la fenêtre la plus contrainte",
+-            "footerDetailAria": "Détail du pied de page d'utilisation"
++            "footerDetailAria": "Détail du pied de page d'utilisation",
++            "stale": {
++              "noSample": "aucune lecture antérieure",
++              "justRead": "dernière lecture à l'instant",
++              "lastRead": "dernière lecture il y a {{age}}",
++              "retryIn": "nouvel essai dans {{countdown}}"
++            },
++            "accountOrdinal": "compte {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "Mise à jour de {{value0}}/{{value1}}",
+diff --git a/src/renderer/src/i18n/locales/ja.json b/src/renderer/src/i18n/locales/ja.json
+index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d783087ab5 100644
+--- a/src/renderer/src/i18n/locales/ja.json
++++ b/src/renderer/src/i18n/locales/ja.json
+@@ -35,7 +35,8 @@
+         "portsToggleDescription": "ライブワークスペースポートを表示します。ワークスペーススコープのポートと外部リスナーの場合はこれをクリックします。",
+         "antigravityToggleDescription": "アクティブなワークスペースの Antigravity サブスクリプション使用量を表示します。",
+         "grokToggleDescription": "Grok CLI でサインインしている場合に Grok サブスクリプションのクレジット使用量を表示します。",
+-        "cursorToggleDescription": "cursor-agent または Cursor IDE でサインインしている場合に Cursor プランの使用状況を表示します。"
++        "cursorToggleDescription": "cursor-agent または Cursor IDE でサインインしている場合に Cursor プランの使用状況を表示します。",
++        "qwenCloudToggleDescription": "CodexBar CLI から取得した Qwen Cloud サブスクリプション使用量を表示します。"
+       },
+       "menuBarIcon": {
+         "title": "メニューバーアイコンを表示",
+@@ -3666,10 +3667,11 @@
+             "antigravityUsageDetails": "Antigravity の使用状況詳細を開く",
+             "grokUsageAria": "Grok の使用状況詳細を開く",
+             "grokUsageMenu": "Grok の使用状況",
++            "cursorUsageMenu": "Cursor の使用状況",
++            "qwenCloudUsageMenu": "Qwen Cloud の使用状況",
+             "floatingTerminalNewActivity": "{{label}}、新規アクティビティ",
+             "codexSignInSuccess": "Codex にサインインしました",
+-            "codexSignInError": "Codex のサインインに失敗しました。もう一度お試しください。",
+-            "cursorUsageMenu": "Cursor の使用状況"
++            "codexSignInError": "Codex のサインインに失敗しました。もう一度お試しください。"
+           },
+           "StatusBarUsageEmptyCta": {
+             "828c764a79": "アカウントを接続する",
+@@ -3809,8 +3811,6 @@
+             "2c35eca8d4": "使用状況を取得できません",
+             "1292d4f2ee": "利用不可",
+             "7567cd1c6b": "使用量を取得できません",
+-            "a9a318b7a3": "更新に失敗しました - キャッシュされたデータが表示されています",
+-            "7ad719c4bf": "制限中",
+             "e740f92596": "更新に失敗しました",
+             "8418ec448d": "{{value0}} の使用状況を更新できませんでした。Agent セッションは引き続きサインイン済みの場合があります。",
+             "45198c7d95": "レート制限リセットが 1 回利用可能",
+@@ -3819,12 +3819,10 @@
+             "d1e442a9e5": "今期限切れ",
+             "6cf9eaed10": "次は {{value0}} 後に期限切れ",
+             "20ad66aed1": "{{value0}} 後に期限切れ",
+-            "0d8d7cfe15": "Claude セッションを待機中",
+             "1804cd8c3f": "サインインを更新中",
+             "f8f0f9d8cc": "ネットワークの問題",
+             "bf2e739f18": "サインインを利用できません",
+             "f8b8dbed85": "使用量を取得できません",
+-            "3d3c9c0c1f": "ライブ Claude ターミナルが認証情報をローテーションした後、Claude 使用量が更新されます。",
+             "42fdd4da1d": "Claude サインインを更新中です。Agent セッションはまだサインイン済みの場合があります。",
+             "c06c1d215d": "ネットワークリクエストに失敗したため、Claude 使用量を更新できませんでした。",
+             "cabdc2a9e0": "Claude サインイン認証情報を読み取れませんでした。",
+@@ -3833,6 +3831,20 @@
+             "d1b7f509ac": "Orca を実行しているコンピュータのターミナルで grok を実行し、起動するまで待ってください。サインインを求められた場合は完了してから、使用状況を再取得してください。チャットメッセージを送る必要はありません。",
+             "f90b3d7a16": "Kimi を実行して更新",
+             "a37e8c15d4": "Orca を実行しているコンピュータのターミナルで kimi を実行し、起動するまで待ってから、使用状況を再取得してください。",
++            "claude": {
++              "deferredRefresh": {
++                "label": "資格情報の更新を待機中",
++                "detail": "このアカウントの資格情報のローテーションが完了すると、Claude の使用量が更新されます。"
++              },
++              "rateLimitedRead": {
++                "label": "更新がレート制限されました",
++                "detail": "Claude が使用量の読み取り自体を制限しました。サブスクリプションの残量が尽きたわけではありません。"
++              }
++            },
++            "refreshRateLimited": {
++              "label": "更新がレート制限されました"
++            },
++            "staleCachedLabel": "{{label}} - キャッシュされたデータが表示されています",
+             "minimax": {
+               "expired": {
+                 "label": "サインインの有効期限が切れました",
+@@ -3880,7 +3892,14 @@
+             "compact": "コンパクト",
+             "footerDetailAria": "使用量フッターの詳細",
+             "detailedTooltip": "バー・ラベル・パーセントを含む完全な使用状況",
+-            "compactTooltip": "凝縮された使用状況: 最も狭いウィンドウのみ"
++            "compactTooltip": "凝縮された使用状況: 最も狭いウィンドウのみ",
++            "stale": {
++              "noSample": "以前の計測なし",
++              "justRead": "たった今取得",
++              "lastRead": "{{age}} 前に取得",
++              "retryIn": "{{countdown}} 後に再試行"
++            },
++            "accountOrdinal": "アカウント {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "{{value0}}/{{value1}}を更新中",
+@@ -9171,6 +9190,11 @@
+             "e7d1b0f3a5": "Grok CLI OAuth から Grok の週次クレジット使用量を表示します。",
+             "d6c0a9e2f4": "grok",
+             "c5b9f8d1e3": "xai",
++            "c5d3e29b74": "Qwen Cloud の使用状況",
++            "3da17692eb": "ステータスバーに Qwen Cloud サブスクリプション使用量を表示します。",
++            "4eb287a3fc": "qwen",
++            "5fc398b40d": "alibaba",
++            "2cf90681da": "codexbar",
+             "usagePercentageDisplayTitle": "使用率",
+             "usagePercentageDisplayDescription": "プロバイダーの制限を使用済みまたは残りの割合で表示するかを選択します。",
+             "tray": {
+diff --git a/src/renderer/src/i18n/locales/ko.json b/src/renderer/src/i18n/locales/ko.json
+index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7e9d08230 100644
+--- a/src/renderer/src/i18n/locales/ko.json
++++ b/src/renderer/src/i18n/locales/ko.json
+@@ -3809,8 +3809,6 @@
+             "2c35eca8d4": "사용량을 가져올 수 없습니다.",
+             "1292d4f2ee": "사용할 수 없음",
+             "7567cd1c6b": "사용량을 확인할 수 없음",
+-            "a9a318b7a3": "새로 고침 실패 - 캐시된 데이터 표시",
+-            "7ad719c4bf": "제한됨",
+             "e740f92596": "새로 고침 실패",
+             "8418ec448d": "{{value0}} 사용량을 새로 고칠 수 없습니다. Agent 세션은 여전히 로그인되어 있을 수 있습니다.",
+             "45198c7d95": "rate-limit 재설정 1회 사용 가능",
+@@ -3819,12 +3817,10 @@
+             "d1e442a9e5": "지금 만료됨",
+             "6cf9eaed10": "다음 항목이 {{value0}} 후 만료됨",
+             "20ad66aed1": "{{value0}} 후 만료됨",
+-            "0d8d7cfe15": "Claude 세션 대기 중",
+             "1804cd8c3f": "로그인 새로 고치는 중",
+             "f8f0f9d8cc": "네트워크 문제",
+             "bf2e739f18": "로그인 사용할 수 없음",
+             "f8b8dbed85": "사용량 사용할 수 없음",
+-            "3d3c9c0c1f": "실시간 Claude 터미널이 자격 증명을 교체한 후 Claude 사용량이 새로 고쳐집니다.",
+             "42fdd4da1d": "Claude 로그인을 새로 고치는 중입니다. 에이전트 세션은 여전히 로그인되어 있을 수 있습니다.",
+             "c06c1d215d": "네트워크 요청 실패로 Claude 사용량을 새로 고칠 수 없습니다.",
+             "cabdc2a9e0": "Claude 로그인 자격 증명을 읽을 수 없습니다.",
+@@ -3833,6 +3829,20 @@
+             "d1b7f509ac": "Run grok in a terminal on the computer running Orca and wait for it to start. If prompted, complete sign-in, then retry usage. You do not need to send a chat message.",
+             "f90b3d7a16": "Run Kimi to refresh",
+             "a37e8c15d4": "Run kimi in a terminal on the computer running Orca and wait for it to start, then retry usage.",
++            "claude": {
++              "deferredRefresh": {
++                "label": "자격 증명 갱신 대기 중",
++                "detail": "이 계정의 자격 증명 교체가 끝나면 Claude 사용량이 새로 고쳐집니다."
++              },
++              "rateLimitedRead": {
++                "label": "새로 고침이 속도 제한됨",
++                "detail": "Claude가 사용량 읽기 자체를 제한했습니다. 구독 할당량이 소진되었다는 뜻은 아닙니다."
++              }
++            },
++            "refreshRateLimited": {
++              "label": "새로 고침이 속도 제한됨"
++            },
++            "staleCachedLabel": "{{label}} - 캐시된 데이터 표시",
+             "minimax": {
+               "expired": {
+                 "label": "로그인이 만료되었습니다",
+@@ -3880,7 +3890,14 @@
+             "compact": "압축",
+             "footerDetailAria": "사용량 푸터 세부 정보",
+             "detailedTooltip": "막대, 레이블, 백분율을 포함한 전체 사용량",
+-            "compactTooltip": "압축된 사용: 가장 좁은 창만 사용"
++            "compactTooltip": "압축된 사용: 가장 좁은 창만 사용",
++            "stale": {
++              "noSample": "이전 측정값 없음",
++              "justRead": "방금 읽음",
++              "lastRead": "{{age}} 전에 읽음",
++              "retryIn": "{{countdown}} 후 재시도"
++            },
++            "accountOrdinal": "계정 {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "{{value0}}/{{value1}} 업데이트 중",
+diff --git a/src/renderer/src/i18n/locales/zh.json b/src/renderer/src/i18n/locales/zh.json
+index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba20f4e9f9a 100644
+--- a/src/renderer/src/i18n/locales/zh.json
++++ b/src/renderer/src/i18n/locales/zh.json
+@@ -3809,8 +3809,6 @@
+             "2c35eca8d4": "无法获取使用情况",
+             "1292d4f2ee": "不可用",
+             "7567cd1c6b": "无法使用",
+-            "a9a318b7a3": "刷新失败——显示缓存数据",
+-            "7ad719c4bf": "受限",
+             "e740f92596": "刷新失败",
+             "8418ec448d": "{{value0}} 用量无法刷新。智能体会话可能仍处于登录状态。",
+             "45198c7d95": "1 次速率限制重置可用",
+@@ -3819,12 +3817,10 @@
+             "d1e442a9e5": "现在过期",
+             "6cf9eaed10": "下一个将在 {{value0}} 后过期",
+             "20ad66aed1": "将在 {{value0}} 后过期",
+-            "0d8d7cfe15": "等待 Claude 会话",
+             "1804cd8c3f": "正在刷新登录",
+             "f8f0f9d8cc": "网络问题",
+             "bf2e739f18": "登录不可用",
+             "f8b8dbed85": "用量不可用",
+-            "3d3c9c0c1f": "实时 Claude 终端轮换凭据后，Claude 用量会刷新。",
+             "42fdd4da1d": "正在刷新 Claude 登录。智能体会话可能仍处于登录状态。",
+             "c06c1d215d": "由于网络请求失败，无法刷新 Claude 用量。",
+             "cabdc2a9e0": "无法读取 Claude 登录凭据。",
+@@ -3833,6 +3829,20 @@
+             "d1b7f509ac": "在运行 Orca 的电脑上的终端中运行 grok，并等待其启动。如有提示，请完成登录，然后重试用量检查。您无需发送聊天消息。",
+             "f90b3d7a16": "运行 Kimi 以刷新",
+             "a37e8c15d4": "在运行 Orca 的电脑上的终端中运行 kimi，等待其启动，然后重试用量检查。",
++            "claude": {
++              "deferredRefresh": {
++                "label": "等待凭据刷新",
++                "detail": "该账户完成凭据轮换后，Claude 用量将自动刷新。"
++              },
++              "rateLimitedRead": {
++                "label": "刷新受到限流",
++                "detail": "Claude 限流的是用量读取本身，并不表示你的订阅额度已用尽。"
++              }
++            },
++            "refreshRateLimited": {
++              "label": "刷新受到限流"
++            },
++            "staleCachedLabel": "{{label}}——显示缓存数据",
+             "minimax": {
+               "expired": {
+                 "label": "登录已过期",
+@@ -3880,7 +3890,14 @@
+             "compact": "精简",
+             "footerDetailAria": "使用情况页脚详情",
+             "detailedTooltip": "完整使用情况，包含条形图、标签和百分比",
+-            "compactTooltip": "精简使用情况：仅显示最吃紧的窗口"
++            "compactTooltip": "精简使用情况：仅显示最吃紧的窗口",
++            "stale": {
++              "noSample": "没有更早的读数",
++              "justRead": "刚刚读取",
++              "lastRead": "{{age}}前读取",
++              "retryIn": "{{countdown}}后重试"
++            },
++            "accountOrdinal": "账户 {{n}}"
+           },
+           "RemoteServerUpdateStatusSegment": {
+             "updating": "Updating {{value0}}/{{value1}}",
+diff --git a/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts b/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
+index 0a380a0625a1a7e7eb109e9c0dda7d80894f8ebd..b6d780465a9b6297bbdc965229fb56f53c32461d 100644
+--- a/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
++++ b/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
+@@ -140,7 +140,8 @@ describe('createUISlice hydratePersistedUI', () => {
+       'minimax',
+       'antigravity',
+       'grok',
+-      'cursor'
++      'cursor',
++      'qwencloud'
+     ])
+     expect(setUI).toHaveBeenCalledWith({
+       statusBarItems: [
+@@ -151,14 +152,16 @@ describe('createUISlice hydratePersistedUI', () => {
+         'minimax',
+         'antigravity',
+         'grok',
+-        'cursor'
++        'cursor',
++        'qwencloud'
+       ],
+       _portsStatusBarDefaultAdded: true,
+       _kimiStatusBarDefaultAdded: true,
+       _minimaxStatusBarDefaultAdded: true,
+       _antigravityStatusBarDefaultAdded: true,
+       _grokStatusBarDefaultAdded: true,
+-      _cursorStatusBarDefaultAdded: true
++      _cursorStatusBarDefaultAdded: true,
++      _codexBarStatusBarDefaultAdded: true
+     })
+   })
+ 
+@@ -175,7 +178,8 @@ describe('createUISlice hydratePersistedUI', () => {
+         _minimaxStatusBarDefaultAdded: true,
+         _antigravityStatusBarDefaultAdded: true,
+         _grokStatusBarDefaultAdded: true,
+-        _cursorStatusBarDefaultAdded: true
++        _cursorStatusBarDefaultAdded: true,
++        _codexBarStatusBarDefaultAdded: true
+       })
+     )
+ 
+@@ -183,6 +187,26 @@ describe('createUISlice hydratePersistedUI', () => {
+     expect(setUI).not.toHaveBeenCalled()
+   })
+ 
++  it('drops the retired ClinePass item from an older persisted status bar', () => {
++    vi.stubGlobal('window', { api: { ui: { set: vi.fn().mockResolvedValue(undefined) } } })
++    const store = createUIStore()
++
++    store.getState().hydratePersistedUI(
++      makePersistedUI({
++        // Read as the on-disk JSON is: the type no longer admits the retired id.
++        statusBarItems: JSON.parse('["claude", "cursor", "clinepass", "qwencloud"]'),
++        _portsStatusBarDefaultAdded: true,
++        _kimiStatusBarDefaultAdded: true,
++        _minimaxStatusBarDefaultAdded: true,
++        _antigravityStatusBarDefaultAdded: true,
++        _grokStatusBarDefaultAdded: true,
++        _codexBarStatusBarDefaultAdded: true
++      })
++    )
++
++    expect(store.getState().statusBarItems).toEqual(['claude', 'cursor', 'qwencloud'])
++  })
++
+   it('persists and hydrates the usage percentage display preference', () => {
+     const setUI = vi.fn().mockResolvedValue(undefined)
+     vi.stubGlobal('window', { api: { ui: { set: setUI } } })
+diff --git a/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts b/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
+index 9737a575f06335d1f4deb356eb0f48be990005e1..f580b8169cd2c131cebc3dd8235dc8e1f1561a19 100644
+--- a/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
++++ b/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
+@@ -227,16 +227,37 @@ export function presetToQuery(presetId: TaskViewPresetId | null): string {
+   }
+ }
+ 
++// Why: persisted UI can still list a retired item; hydration drops what this build no longer renders.
++const KNOWN_STATUS_BAR_ITEMS: Record<StatusBarItem, true> = {
++  claude: true,
++  codex: true,
++  gemini: true,
++  antigravity: true,
++  'opencode-go': true,
++  kimi: true,
++  minimax: true,
++  grok: true,
++  cursor: true,
++  qwencloud: true,
++  ssh: true,
++  'resource-usage': true,
++  ports: true
++}
++
++function isKnownStatusBarItem(id: string): id is StatusBarItem {
++  return Object.hasOwn(KNOWN_STATUS_BAR_ITEMS, id)
++}
++
+ export function migrateStatusBarItems(items: readonly string[] | undefined): StatusBarItem[] {
+   const source = items ?? DEFAULT_STATUS_BAR_ITEMS
+-  const out: string[] = []
++  const out: StatusBarItem[] = []
+   for (const id of source) {
+     const mapped = id === 'memory' || id === 'sessions' ? 'resource-usage' : id
+-    if (!out.includes(mapped)) {
++    if (isKnownStatusBarItem(mapped) && !out.includes(mapped)) {
+       out.push(mapped)
+     }
+   }
+-  return out as StatusBarItem[]
++  return out
+ }
+ 
+ export function hydrateUnexpectedSignoutDismissal(
+diff --git a/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts b/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
+index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a453a52166c 100644
+--- a/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
++++ b/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
+@@ -2,31 +2,36 @@ import type { PersistedUIState } from '../../../../../shared/persisted-ui-state-
+ import type { StatusBarItem } from '../../../../../shared/ui-chrome-types'
+ import { migrateStatusBarItems } from './ui-slice-hydration-sanitizers'
+ 
+-const DEFAULT_ON_PORTS_STATUS_BAR_ITEM: StatusBarItem = 'ports'
+-const DEFAULT_ON_KIMI_STATUS_BAR_ITEM: StatusBarItem = 'kimi'
+-const DEFAULT_ON_MINIMAX_STATUS_BAR_ITEM: StatusBarItem = 'minimax'
+-const DEFAULT_ON_ANTIGRAVITY_STATUS_BAR_ITEM: StatusBarItem = 'antigravity'
+-const DEFAULT_ON_GROK_STATUS_BAR_ITEM: StatusBarItem = 'grok'
+-const DEFAULT_ON_CURSOR_STATUS_BAR_ITEM: StatusBarItem = 'cursor'
++// Why: a one-shot flag per rollout adds its items to an existing bar once, so a user who later hides one stays hidden.
++const DEFAULT_ON_STATUS_BAR_ITEMS = [
++  ['_portsStatusBarDefaultAdded', ['ports']],
++  ['_kimiStatusBarDefaultAdded', ['kimi']],
++  ['_minimaxStatusBarDefaultAdded', ['minimax']],
++  ['_antigravityStatusBarDefaultAdded', ['antigravity']],
++  ['_grokStatusBarDefaultAdded', ['grok']],
++  ['_cursorStatusBarDefaultAdded', ['cursor']],
++  // Why: CodexBar-metered providers share one durable signal (the codexbar binary), hence one flag.
++  ['_codexBarStatusBarDefaultAdded', ['qwencloud']]
++] as const satisfies readonly (readonly [keyof PersistedUIState, readonly StatusBarItem[]])[]
+ 
+ export function hydrateStatusBarItems(ui: PersistedUIState): StatusBarItem[] {
+   let items = migrateStatusBarItems(ui.statusBarItems)
+-  const defaults = [
+-    ['_portsStatusBarDefaultAdded', DEFAULT_ON_PORTS_STATUS_BAR_ITEM],
+-    ['_kimiStatusBarDefaultAdded', DEFAULT_ON_KIMI_STATUS_BAR_ITEM],
+-    ['_minimaxStatusBarDefaultAdded', DEFAULT_ON_MINIMAX_STATUS_BAR_ITEM],
+-    ['_antigravityStatusBarDefaultAdded', DEFAULT_ON_ANTIGRAVITY_STATUS_BAR_ITEM],
+-    ['_grokStatusBarDefaultAdded', DEFAULT_ON_GROK_STATUS_BAR_ITEM],
+-    ['_cursorStatusBarDefaultAdded', DEFAULT_ON_CURSOR_STATUS_BAR_ITEM]
+-  ] as const
+-  for (const [flag, item] of defaults) {
+-    if (!ui[flag] && !items.includes(item)) {
+-      items = [...items, item]
++  for (const [flag, added] of DEFAULT_ON_STATUS_BAR_ITEMS) {
++    if (ui[flag]) {
++      continue
++    }
++    for (const item of added) {
++      if (!items.includes(item)) {
++        items = [...items, item]
++      }
+     }
+   }
+-  if (typeof window !== 'undefined' && defaults.some(([flag]) => !ui[flag])) {
++  if (typeof window !== 'undefined' && DEFAULT_ON_STATUS_BAR_ITEMS.some(([flag]) => !ui[flag])) {
+     window.api.ui
+-      .set({ statusBarItems: items, ...Object.fromEntries(defaults.map(([flag]) => [flag, true])) })
++      .set({
++        statusBarItems: items,
++        ...Object.fromEntries(DEFAULT_ON_STATUS_BAR_ITEMS.map(([flag]) => [flag, true]))
++      })
+       .catch(console.error)
+   }
+   return items
+diff --git a/src/shared/constants.ts b/src/shared/constants.ts
+index aa919cdec38536f1379931146222ead0e865e715..5263c788229e49591b8b11721d83c2daa1d43ed2 100644
+--- a/src/shared/constants.ts
++++ b/src/shared/constants.ts
+@@ -198,10 +198,7 @@ export function getDefaultRepoHookSettings(): RepoHookSettings {
+     mode: 'auto',
+     setupRunPolicy: 'run-by-default',
+     setupAgentStartupPolicy: DEFAULT_SETUP_AGENT_STARTUP_POLICY,
+-    scripts: {
+-      setup: '',
+-      archive: ''
+-    }
++    scripts: { setup: '', archive: '' }
+   }
+ }
+ 
+@@ -230,6 +227,7 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
+     sshRemotePtyLeases: [],
+     sshPtyConsumerRecoveries: [],
+     claudeLivePtySessionIds: [],
++    claudeLivePtyBindings: [],
+     migrationUnsupportedPtyEntries: [],
+     legacyPaneKeyAliasEntries: [],
+     automations: [],
+diff --git a/src/shared/persisted-state-types.ts b/src/shared/persisted-state-types.ts
+index a081eee76ab3f98a1abf5a650dfc9c230ac6cf14..260ef6615f1723700d272e8b687b0772d940eb4b 100644
+--- a/src/shared/persisted-state-types.ts
++++ b/src/shared/persisted-state-types.ts
+@@ -47,6 +47,14 @@ export type PersistedMobileClientTabSelections = Record<
+ >
+ 
+ // ─── Persistence shape ──────────────────────────────────────────────
++/** One persisted Claude session's credential-surface binding. `accountId` is
++ *  absent for the shared ~/.claude and for a WSL default-distro selection. */
++export type ClaudeLivePtyBindingEntry = {
++  sessionId: string
++  route: 'account-dir' | 'wsl-dir' | 'shared-dir'
++  accountId?: string
++}
++
+ export type PersistedState = {
+   schemaVersion: number
+   repos: Repo[]
+@@ -105,6 +113,11 @@ export type PersistedState = {
+   sshPtyConsumerRecoveries?: SshPtyConsumerRecovery[]
+   /** Live local Claude daemon session ids; seeds the live-PTY gate so early OAuth refresh can't rotate the single-use refresh token out from under a running daemon. */
+   claudeLivePtySessionIds?: string[]
++  /** Which managed Claude account each of those sessions was launched under, so a
++   *  daemon-surviving pane defers only its own account's OAuth refresh instead of
++   *  every account's. Sessions absent here cannot be attributed and are treated as
++   *  holding the shared ~/.claude. */
++  claudeLivePtyBindings?: ClaudeLivePtyBindingEntry[]
+   migrationUnsupportedPtyEntries: MigrationUnsupportedPtyEntry[]
+   legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
+   automations: Automation[]
+diff --git a/src/shared/persisted-ui-state-types.ts b/src/shared/persisted-ui-state-types.ts
+index 6b1f20b58b2af0907dae6ce5a457aabb31b073be..7fafe4def38299a697386b83630f22eb98d16d34 100644
+--- a/src/shared/persisted-ui-state-types.ts
++++ b/src/shared/persisted-ui-state-types.ts
+@@ -118,6 +118,8 @@ export type PersistedUIState = {
+   _antigravityStatusBarDefaultAdded?: boolean
+   /** One-shot migration flag for adding the default-on Grok status item. */
+   _grokStatusBarDefaultAdded?: boolean
++  /** One-shot migration flag for adding the default-on CodexBar status item (Qwen Cloud). */
++  _codexBarStatusBarDefaultAdded?: boolean
+   /** One-shot migration flag for adding the default-on Cursor status item. */
+   _cursorStatusBarDefaultAdded?: boolean
+   statusBarItems: StatusBarItem[]
+diff --git a/src/shared/rpc-contract/client-ui-params.ts b/src/shared/rpc-contract/client-ui-params.ts
+index b78a984889e429de310c0895974f65a919ce682f..59aa3b90ec4aa233f6203d73864f2626972c3f2a 100644
+--- a/src/shared/rpc-contract/client-ui-params.ts
++++ b/src/shared/rpc-contract/client-ui-params.ts
+@@ -70,6 +70,7 @@ export const StatusBarItem = z.enum([
+   'minimax',
+   'grok',
+   'cursor',
++  'qwencloud',
+   'ssh',
+   'resource-usage',
+   'ports'
+@@ -183,6 +184,7 @@ export const UiUpdateFields = z
+     _minimaxStatusBarDefaultAdded: z.boolean().optional(),
+     _antigravityStatusBarDefaultAdded: z.boolean().optional(),
+     _grokStatusBarDefaultAdded: z.boolean().optional(),
++    _codexBarStatusBarDefaultAdded: z.boolean().optional(),
+     _cursorStatusBarDefaultAdded: z.boolean().optional(),
+     statusBarVisible: z.boolean().optional(),
+     usagePercentageDisplay: z.enum(['used', 'remaining']).optional(),
+diff --git a/src/shared/status-bar-defaults.ts b/src/shared/status-bar-defaults.ts
+index 2eb855d9dd5c86c7d5647e5a3a8a4de27ba162c1..80af3937b52bbe2d24b06276a8383c3fdb4a23a1 100644
+--- a/src/shared/status-bar-defaults.ts
++++ b/src/shared/status-bar-defaults.ts
+@@ -10,6 +10,7 @@ export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
+   'minimax',
+   'grok',
+   'cursor',
++  'qwencloud',
+   'ssh',
+   'resource-usage',
+   'ports'
+diff --git a/src/shared/ui-chrome-types.ts b/src/shared/ui-chrome-types.ts
+index d9aee820949ecf32e7d5f29172952f1ecef9993a..37fa8c1f4e76f9e2c0ab3cda42f650301df76154 100644
+--- a/src/shared/ui-chrome-types.ts
++++ b/src/shared/ui-chrome-types.ts
+@@ -63,6 +63,7 @@ export type StatusBarItem =
+   | 'minimax'
+   | 'grok'
+   | 'cursor'
++  | 'qwencloud'
+   | 'ssh'
+   | 'resource-usage'
+   | 'ports'
+diff --git a/tests/e2e/status-bar-provider-account-meters.spec.ts b/tests/e2e/status-bar-provider-account-meters.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507ecfca057e
+--- /dev/null
++++ b/tests/e2e/status-bar-provider-account-meters.spec.ts
+@@ -0,0 +1,518 @@
++import { test, expect } from './helpers/orca-app'
++import { waitForSessionReady } from './helpers/store'
++
++const ACTIVE_EMAIL = 'active-account@example.com'
++const SECOND_EMAIL = 'second-account@example.com'
++const THIRD_EMAIL = 'third-account@example.com'
++
++/**
++ * Proves the rendered status bar carries one meter per Claude account rather than only the
++ * active one. State is injected through the renderer store: provisioning two real OAuth
++ * logins is not needed to exercise the lane build and its DOM.
++ */
++test('renders one status-bar meter per provider account', async ({ orcaPage }) => {
++  await waitForSessionReady(orcaPage)
++
++  await orcaPage.evaluate(
++    async ({ activeEmail, secondEmail }) => {
++      const store = window.__store
++      if (!store) {
++        throw new Error('window.__store is not available')
++      }
++      await store.getState().ensureDetectedAgents()
++      const previous = store.getState()
++      if (!previous.settings) {
++        throw new Error('settings are not hydrated yet')
++      }
++      const window5h = {
++        windowMinutes: 300,
++        resetsAt: null,
++        resetDescription: null
++      }
++      store.setState({
++        // Finish discovery before injecting the fixture; CI has no Claude CLI.
++        detectedAgentIds: ['claude'],
++        statusBarItems: ['claude'],
++        settings: {
++          ...previous.settings,
++          activeRuntimeEnvironmentId: null,
++          activeClaudeManagedAccountId: 'account-active',
++          activeClaudeManagedAccountIdsByRuntime: { host: 'account-active', wsl: {} },
++          claudeManagedAccounts: [
++            {
++              id: 'account-active',
++              email: activeEmail,
++              managedAuthPath: '/tmp/account-active/auth',
++              authMethod: 'subscription-oauth',
++              createdAt: 1,
++              updatedAt: 1,
++              lastAuthenticatedAt: 1
++            },
++            {
++              id: 'account-second',
++              email: secondEmail,
++              managedAuthPath: '/tmp/account-second/auth',
++              authMethod: 'subscription-oauth',
++              createdAt: 2,
++              updatedAt: 2,
++              lastAuthenticatedAt: 2
++            }
++          ]
++        },
++        rateLimits: {
++          ...previous.rateLimits,
++          claude: {
++            provider: 'claude',
++            session: { ...window5h, usedPercent: 41 },
++            weekly: null,
++            updatedAt: Date.now(),
++            error: null,
++            status: 'ok'
++          },
++          activeClaudeAccountId: 'account-active',
++          activeCodexAccountId: null,
++          claudeSystemDefault: null,
++          codexSystemDefault: null,
++          inactiveClaudeAccounts: [
++            {
++              accountId: 'account-second',
++              updatedAt: Date.now(),
++              isFetching: false,
++              rateLimits: {
++                provider: 'claude',
++                session: { ...window5h, usedPercent: 87 },
++                weekly: null,
++                updatedAt: Date.now(),
++                error: null,
++                status: 'ok'
++              }
++            }
++          ]
++        }
++      })
++    },
++    { activeEmail: ACTIVE_EMAIL, secondEmail: SECOND_EMAIL }
++  )
++
++  // Each account is its own meter, discoverable by the email disclosed on hover.
++  const activeMeter = orcaPage.locator(`[title="${ACTIVE_EMAIL}"]`)
++  const secondMeter = orcaPage.locator(`[title="${SECOND_EMAIL}"]`)
++  await expect(activeMeter).toBeVisible()
++  await expect(secondMeter).toBeVisible()
++
++  // Ordinals label the lanes in a stable order.
++  await expect(activeMeter).toHaveText(/1$/)
++  await expect(secondMeter).toHaveText(/2$/)
++
++  // Both accounts' own percentages are on the bar, not the active one twice.
++  // Why anchor on the meters, not the trigger's label: the label and the
++  // percent formatting are localized ("Utilisation", "41 % utilisé").
++  const usageTrigger = orcaPage.locator('button', { has: activeMeter })
++  await expect(usageTrigger).toContainText(/41\s?%/)
++  await expect(usageTrigger).toContainText(/87\s?%/)
++})
++
++/**
++ * Proves the rendered bar and popover stay honest when one account's quota refresh fails while
++ * another keeps refreshing: the failing lane keeps its last good number, says how old it is and
++ * why the refresh failed, and drops the number entirely once the window it measured has reset.
++ */
++test('distinguishes a healthy account from a rate-limited and an expired retained one', async ({
++  orcaPage
++}, testInfo) => {
++  await waitForSessionReady(orcaPage)
++
++  // Why: the host OS locale drives Orca's default UI language, and this spec asserts the
++  // English status copy. Pin it so the locators are stable across dev machines and CI.
++  await orcaPage.evaluate(() => window.__store!.getState().updateSettings({ uiLanguage: 'en' }))
++  await expect
++    .poll(() => orcaPage.evaluate(() => window.__store?.getState().settings?.uiLanguage))
++    .toBe('en')
++
++  await orcaPage.evaluate(
++    async ({ activeEmail, secondEmail, thirdEmail }) => {
++      const store = window.__store
++      if (!store) {
++        throw new Error('window.__store is not available')
++      }
++      await store.getState().ensureDetectedAgents()
++      const previous = store.getState()
++      if (!previous.settings) {
++        throw new Error('settings are not hydrated yet')
++      }
++      const now = Date.now()
++      const managedAccount = (id: string, email: string, order: number) => ({
++        id,
++        email,
++        managedAuthPath: `/tmp/${id}/auth`,
++        authMethod: 'subscription-oauth' as const,
++        createdAt: order,
++        updatedAt: order,
++        lastAuthenticatedAt: order
++      })
++      store.setState({
++        detectedAgentIds: ['claude'],
++        statusBarItems: ['claude'],
++        settings: {
++          ...previous.settings,
++          activeRuntimeEnvironmentId: null,
++          activeClaudeManagedAccountId: 'account-active',
++          activeClaudeManagedAccountIdsByRuntime: { host: 'account-active', wsl: {} },
++          claudeManagedAccounts: [
++            managedAccount('account-active', activeEmail, 1),
++            managedAccount('account-second', secondEmail, 2),
++            managedAccount('account-third', thirdEmail, 3)
++          ]
++        },
++        rateLimits: {
++          ...previous.rateLimits,
++          // Healthy: refreshed just now, reset still ahead.
++          claude: {
++            provider: 'claude',
++            session: {
++              usedPercent: 41,
++              windowMinutes: 300,
++              resetsAt: now + 2 * 60 * 60_000,
++              resetDescription: null
++            },
++            weekly: null,
++            updatedAt: now,
++            error: null,
++            status: 'ok'
++          },
++          activeClaudeAccountId: 'account-active',
++          activeCodexAccountId: null,
++          claudeSystemDefault: null,
++          codexSystemDefault: null,
++          inactiveClaudeAccounts: [
++            {
++              accountId: 'account-second',
++              updatedAt: now,
++              isFetching: false,
++              // 429 on the usage read: the previous sample is retained, updatedAt still dates
++              // that sample, and the window it measured is still open.
++              rateLimits: {
++                provider: 'claude',
++                session: {
++                  usedPercent: 87,
++                  windowMinutes: 300,
++                  resetsAt: now + 2 * 60 * 60_000,
++                  resetDescription: null
++                },
++                weekly: null,
++                updatedAt: now - 12 * 60_000,
++                error: 'HTTP 429 from the Claude usage endpoint',
++                status: 'error',
++                usageMetadata: { failureKind: 'rate-limited' }
++              }
++            },
++            {
++              accountId: 'account-third',
++              updatedAt: now,
++              isFetching: false,
++              // Retained far longer than the window it measured: the quota period it described
++              // has already rolled over, so the number is no longer a reading of anything.
++              rateLimits: {
++                provider: 'claude',
++                session: {
++                  usedPercent: 63,
++                  windowMinutes: 300,
++                  resetsAt: now - 60 * 60_000,
++                  resetDescription: null
++                },
++                weekly: null,
++                updatedAt: now - 20 * 60 * 60_000,
++                error: 'HTTP 429 from the Claude usage endpoint',
++                status: 'error',
++                usageMetadata: { failureKind: 'rate-limited' }
++              }
++            }
++          ]
++        }
++      })
++    },
++    { activeEmail: ACTIVE_EMAIL, secondEmail: SECOND_EMAIL, thirdEmail: THIRD_EMAIL }
++  )
++
++  const activeMeter = orcaPage.locator(`[title="${ACTIVE_EMAIL}"]`)
++  const expiredMeter = orcaPage.locator(`[title="${THIRD_EMAIL}"]`)
++  await expect(activeMeter).toBeVisible()
++  await expect(expiredMeter).toBeVisible()
++  const usageTrigger = orcaPage.locator('button', { has: activeMeter })
++
++  // On the bar itself: both live readings survive, the reset-expired one is blanked on its
++  // own segment — asserted positively, so a missing third lane cannot pass this.
++  await expect(usageTrigger).toContainText(/41\s?%/)
++  await expect(usageTrigger).toContainText(/87\s?%/)
++  const expiredSegment = usageTrigger.locator('span').filter({ has: expiredMeter }).first()
++  await expect(expiredSegment).toContainText('—')
++  await expect(expiredSegment).not.toContainText(/63\s?%/)
++
++  await usageTrigger.click()
++
++  const healthyRow = orcaPage.locator('[data-usage-mode]').filter({ hasText: ACTIVE_EMAIL })
++  const rateLimitedRow = orcaPage.locator('[data-usage-mode]').filter({ hasText: SECOND_EMAIL })
++  const expiredRow = orcaPage.locator('[data-usage-mode]').filter({ hasText: THIRD_EMAIL })
++  await expect(healthyRow).toBeVisible()
++  await expect(rateLimitedRow).toBeVisible()
++  await expect(expiredRow).toBeVisible()
++
++  // The refreshing account reads as a plain current measurement.
++  await expect(healthyRow).toContainText(/41\s?%/)
++  await expect(healthyRow).not.toContainText('last read')
++  await expect(healthyRow).not.toContainText('Refresh rate limited')
++
++  // The throttled one keeps its number, dates it, and names the failure — and says nothing
++  // about the subscription being spent.
++  await expect(rateLimitedRow).toContainText(/87\s?%/)
++  await expect(rateLimitedRow).toContainText('Refresh rate limited')
++  await expect(rateLimitedRow).toContainText('last read 12m ago')
++
++  // The expired one keeps the failure and the age but withholds the stale number.
++  await expect(expiredRow).not.toContainText(/63\s?%/)
++  await expect(expiredRow).toContainText('—')
++  await expect(expiredRow).toContainText('Refresh rate limited')
++  await expect(expiredRow).toContainText('last read 20h ago')
++
++  await testInfo.attach('status-bar-stale-account-meters.png', {
++    body: await orcaPage.screenshot(),
++    contentType: 'image/png'
++  })
++})
++
++// The failing lanes' French copy, verbatim from src/renderer/src/i18n/locales/fr.json.
++// "En attente du renouvellement des identifiants" is the longest status sentence the bar can
++// carry, and the one the user's screenshot wrapped on.
++const FR_DEFERRED_LABEL = 'En attente du renouvellement des identifiants'
++const FR_RATE_LIMITED_LABEL = 'Actualisation limitée par le serveur'
++const FR_REFRESH_FAILED_LABEL = "Échec de l'actualisation"
++// The status bar is one 24px row (`h-6 min-h-[24px]`); a wrapped label doubled it.
++const STATUS_BAR_ROW_MAX_PX = 24
++// A single 11px line plus the 6px meter and its leading; a second line lands well past this.
++const SEGMENT_LINE_MAX_PX = 20
++// Matches the `max-w-[72px]` bound on the bar's status label, plus subpixel headroom.
++const STATUS_LABEL_MAX_PX = 74
++
++/**
++ * Proves the densest realistic roster stays on one line in a verbose locale: seven lanes — two
++ * Claude accounts and Qwen all failing with no cached window, plus two Codex accounts, Grok
++ * and Cursor still reporting — rendered in French at a real 1568px window.
++ *
++ * Why this fixture: French status copy ("En attente du renouvellement des identifiants") is four
++ * times the English "Refresh failed", and the bar's label had no width bound, so the flex row
++ * reflowed it and pushed every meter onto extra lines.
++ *
++ * Safety: every account, snapshot and failure is injected into the renderer store. The spec reads
++ * no keychain and contacts no provider — there are no real credentials anywhere in it.
++ */
++test('keeps a dense French roster on a single status-bar line', async ({
++  electronApp,
++  orcaPage
++}, testInfo) => {
++  // Why: compact kicks in under 900px of *status-bar* width. Pin both the Chromium
++  // viewport and the BrowserWindow so the ResizeObserver sees a real 1568px bar.
++  await orcaPage.setViewportSize({ width: 1568, height: 900 })
++  await electronApp.evaluate(({ BrowserWindow }) => {
++    BrowserWindow.getAllWindows()[0]?.setSize(1568, 900)
++  })
++  await waitForSessionReady(orcaPage)
++
++  await orcaPage.evaluate(() => window.__store!.getState().updateSettings({ uiLanguage: 'fr' }))
++  await expect
++    .poll(() => orcaPage.evaluate(() => window.__store?.getState().settings?.uiLanguage))
++    .toBe('fr')
++
++  await orcaPage.evaluate(async () => {
++    const store = window.__store
++    if (!store) {
++      throw new Error('window.__store is not available')
++    }
++    await store.getState().ensureDetectedAgents()
++    const previous = store.getState()
++    if (!previous.settings) {
++      throw new Error('settings are not hydrated yet')
++    }
++    const now = Date.now()
++    const session = (usedPercent: number) => ({
++      usedPercent,
++      windowMinutes: 300,
++      resetsAt: now + 2 * 60 * 60_000,
++      resetDescription: null
++    })
++    const weekly = (usedPercent: number) => ({
++      usedPercent,
++      windowMinutes: 10_080,
++      resetsAt: now + 3 * 24 * 60 * 60_000,
++      resetDescription: null
++    })
++    // No window at all: the lane can only say why its refresh failed, which is the wrapping case.
++    const failing = (
++      provider: 'claude' | 'qwencloud',
++      error: string,
++      failureKind?: 'deferred-by-live-session' | 'rate-limited'
++    ) => ({
++      provider,
++      session: null,
++      weekly: null,
++      updatedAt: now - 9 * 60_000,
++      error,
++      status: 'error' as const,
++      ...(failureKind ? { usageMetadata: { failureKind } } : {})
++    })
++    const metered = (provider: 'codex' | 'grok' | 'cursor', usedPercent: number) => ({
++      provider,
++      session: session(usedPercent),
++      weekly: null,
++      updatedAt: now,
++      error: null,
++      status: 'ok' as const
++    })
++    store.setState({
++      detectedAgentIds: ['claude', 'codex', 'grok'],
++      statusBarItems: ['claude', 'codex', 'grok', 'cursor', 'qwencloud'],
++      statusBarUsageMode: 'verbose',
++      settings: {
++        ...previous.settings,
++        activeRuntimeEnvironmentId: null,
++        activeClaudeManagedAccountId: 'claude-1',
++        activeClaudeManagedAccountIdsByRuntime: { host: 'claude-1', wsl: {} },
++        claudeManagedAccounts: [
++          {
++            id: 'claude-1',
++            email: 'claude-un@example.com',
++            managedAuthPath: '/tmp/claude-1/auth',
++            authMethod: 'subscription-oauth',
++            createdAt: 1,
++            updatedAt: 1,
++            lastAuthenticatedAt: 1
++          },
++          {
++            id: 'claude-2',
++            email: 'claude-deux@example.com',
++            managedAuthPath: '/tmp/claude-2/auth',
++            authMethod: 'subscription-oauth',
++            createdAt: 2,
++            updatedAt: 2,
++            lastAuthenticatedAt: 2
++          }
++        ],
++        activeCodexManagedAccountId: 'codex-1',
++        activeCodexManagedAccountIdsByRuntime: { host: 'codex-1', wsl: {} },
++        codexManagedAccounts: [
++          {
++            id: 'codex-1',
++            email: 'codex-un@example.com',
++            managedHomePath: '/tmp/codex-1',
++            createdAt: 1,
++            updatedAt: 1,
++            lastAuthenticatedAt: 1
++          },
++          {
++            id: 'codex-2',
++            email: 'codex-deux@example.com',
++            managedHomePath: '/tmp/codex-2',
++            createdAt: 2,
++            updatedAt: 2,
++            lastAuthenticatedAt: 2
++          }
++        ]
++      },
++      rateLimits: {
++        ...previous.rateLimits,
++        // Both Claude lanes fail with nothing cached: the longest French sentence, twice.
++        claude: failing(
++          'claude',
++          'Usage refresh deferred by a live Claude session',
++          'deferred-by-live-session'
++        ),
++        codex: { ...metered('codex', 34), weekly: weekly(58) },
++        gemini: null,
++        opencodeGo: null,
++        kimi: null,
++        antigravity: null,
++        minimax: null,
++        grok: metered('grok', 12),
++        cursor: metered('cursor', 71),
++        qwencloud: failing('qwencloud', 'HTTP 500 from the Qwen usage endpoint'),
++        grokAuthConfigured: true,
++        codexbarAvailable: true,
++        activeClaudeAccountId: 'claude-1',
++        activeCodexAccountId: 'codex-1',
++        claudeSystemDefault: null,
++        codexSystemDefault: null,
++        inactiveClaudeAccounts: [
++          {
++            accountId: 'claude-2',
++            updatedAt: now,
++            isFetching: false,
++            rateLimits: failing('claude', 'HTTP 429 from the Claude usage endpoint', 'rate-limited')
++          }
++        ],
++        inactiveCodexAccounts: [
++          {
++            accountId: 'codex-2',
++            updatedAt: now,
++            isFetching: false,
++            rateLimits: { ...metered('codex', 62), weekly: weekly(19) }
++          }
++        ]
++      }
++    })
++  })
++
++  const usageTrigger = orcaPage.getByRole('button', { name: 'Utilisation', exact: true })
++  await expect(usageTrigger).toBeVisible()
++  // Two Claude lanes, two Codex lanes, Grok, Cursor, Qwen.
++  const segments = usageTrigger.locator(':scope > span')
++  await expect(segments).toHaveCount(7)
++
++  // The regression in one number: the row's own height. A wrapped label made the trigger taller
++  // than the bar it lives in.
++  await expect
++    .poll(async () => (await usageTrigger.boundingBox())?.height ?? Number.POSITIVE_INFINITY, {
++      message: 'the usage cluster is taller than one status-bar row (labels are wrapping)'
++    })
++    .toBeLessThanOrEqual(STATUS_BAR_ROW_MAX_PX)
++
++  const triggerBox = (await usageTrigger.boundingBox())!
++  const segmentBoxes = await segments.evaluateAll((nodes) =>
++    nodes.map((node) => {
++      const box = node.getBoundingClientRect()
++      return { top: box.top, bottom: box.bottom, right: box.right, height: box.height }
++    })
++  )
++
++  for (const box of segmentBoxes) {
++    // Each lane is one line…
++    expect(box.height).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
++    // …all lanes share that line…
++    expect(Math.abs(box.top - triggerBox.y)).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
++    expect(box.bottom).toBeLessThanOrEqual(triggerBox.y + triggerBox.height + 1)
++    // …and none of them runs off the window instead of wrapping.
++    expect(box.right).toBeLessThanOrEqual(1568)
++  }
++
++  // The long sentence is bounded and ellipsized on the bar, with the full text on hover.
++  const deferredLabel = usageTrigger.locator(`[title="${FR_DEFERRED_LABEL}"]`)
++  await expect(deferredLabel).toBeVisible()
++  expect((await deferredLabel.boundingBox())!.width).toBeLessThanOrEqual(STATUS_LABEL_MAX_PX)
++
++  await testInfo.attach('status-bar-dense-french-roster.png', {
++    body: await orcaPage.screenshot(),
++    contentType: 'image/png'
++  })
++
++  // Nothing is hidden: every failure is still spelled out in full in the Usage popover.
++  await usageTrigger.click()
++  const deferredRow = orcaPage
++    .locator('[data-usage-mode]')
++    .filter({ hasText: 'claude-un@example.com' })
++  const rateLimitedRow = orcaPage
++    .locator('[data-usage-mode]')
++    .filter({ hasText: 'claude-deux@example.com' })
++  await expect(deferredRow).toContainText(FR_DEFERRED_LABEL)
++  await expect(rateLimitedRow).toContainText(FR_RATE_LIMITED_LABEL)
++  await expect(orcaPage.locator('[data-usage-mode]').filter({ hasText: 'Qwen' })).toContainText(
++    FR_REFRESH_FAILED_LABEL
++  )
++})

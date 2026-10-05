@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: run meter gate under a private Linux display
+
+Carried-Because: Headless Electron requires an X server on the Linux builder; Mac native network isolation remains required.
+Tests: tests/e2e/status-bar-provider-account-meters.spec.ts
+
+diff --git a/config/scripts/run-meter-gate.mjs b/config/scripts/run-meter-gate.mjs
+new file mode 100755
+index 0000000000000000000000000000000000000000..941ddd0746a645cf13c6f1a7f2e9b65c76d386c0
+--- /dev/null
++++ b/config/scripts/run-meter-gate.mjs
+@@ -0,0 +1,14 @@
++#!/usr/bin/env node
++import { spawnSync } from 'node:child_process'
++
++// Headless Electron still needs an X server on Linux. Mac native-network
++// qualification remains blocked by HarnessOS; this does not bypass that gate.
++const playwright = [process.execPath, 'node_modules/@playwright/test/cli.js', 'test',
++  '--config', 'tests/playwright.config.ts', '--project=electron-headless', '--workers=1',
++  'tests/e2e/status-bar-provider-account-meters.spec.ts']
++const argv = process.platform === 'linux'
++  ? ['xvfb-run', '--auto-servernum', ...playwright]
++  : playwright
++const result = spawnSync(argv[0], argv.slice(1), { stdio: 'inherit' })
++if (result.error) console.error(result.error.message)
++process.exitCode = result.status ?? 1

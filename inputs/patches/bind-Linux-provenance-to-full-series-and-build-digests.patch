@@ -1,0 +1,200 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: bind Linux provenance to full series and build digests
+
+Carried-Because: The publisher must compare the exact Linux artifact against verified series and build inputs.
+Tests: config/scripts/build-provenance.test.mjs
+
+diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
+index 063bf0ba85e5b9a67f7e71a77fdf91170f9b9624..6ee418fa59b2c395e6f7cf3c1eccbd91682fc26a 100644
+--- a/.github/CONTRIBUTING.md
++++ b/.github/CONTRIBUTING.md
+@@ -29,8 +29,11 @@ See [the install policy](../docs/reference/pnpm-install-policy.md).
+ 
+ Local builds never publish or install a global CLI. Packaged Linux `orca-fork-build.json`
+ and Mac `orca-local-build.json` record the full workbench HEAD; environment commit
+-overrides cannot replace it. HarnessOS publication additionally requires the exact
+-artifact's signing and bind qualifications. A local build alone is not qualification.
++overrides cannot replace it. Linux stamping also requires the verified build runner's
++`HOS_SERIES_DIGEST` and `HOS_BUILD_DIGEST` (64 lowercase hex each), recorded as
++`series` and `build`; absent or malformed values fail before writing a stamp.
++HarnessOS publication additionally requires the exact artifact's signing and bind
++qualifications. A local build alone is not qualification.
+ 
+ Pi and OMP can share `PI_CODING_AGENT_DIR`. Explicit agent launches install the
+ same runtime-detecting status, prefill and titlebar templates into `agent/extensions/`;
+diff --git a/config/scripts/build-provenance.cjs b/config/scripts/build-provenance.cjs
+index 22bae3c00bf7dd3e43ad1ce2d126b8dbefa86a86..22d3bcc90cbe885e3786feb957d6d72406d744b7 100644
+--- a/config/scripts/build-provenance.cjs
++++ b/config/scripts/build-provenance.cjs
+@@ -16,6 +16,14 @@ function readWorkbenchCommit(cwd = WORKBENCH_ROOT) {
+   return commit
+ }
+ 
++function readRequiredDigest(name) {
++  const value = process.env[name]
++  if (typeof value !== 'string' || value.length !== 64 || !/^[0-9a-f]{64}$/.test(value)) {
++    throw new Error(`${name} must be 64 lowercase hex characters`)
++  }
++  return value
++}
++
+ function writeBuildProvenance(
+   resourcesDir,
+   { platform, version, architecture },
+@@ -25,9 +33,11 @@ function writeBuildProvenance(
+   if (platform === 'darwin') {
+     writeMacBuildCompatibility(resourcesDir, { version, commit, architecture })
+   } else if (platform === 'linux') {
++    const series = readRequiredDigest('HOS_SERIES_DIGEST')
++    const build = readRequiredDigest('HOS_BUILD_DIGEST')
+     writeFileSync(
+       join(resourcesDir, 'orca-fork-build.json'),
+-      `${JSON.stringify({ version, commit, platform, architecture }, null, 2)}\n`,
++      `${JSON.stringify({ version, commit, platform, architecture, series, build }, null, 2)}\n`,
+       'utf8'
+     )
+   } else {
+diff --git a/config/scripts/build-provenance.test.mjs b/config/scripts/build-provenance.test.mjs
+index c2c6bec733e5ead684568d21781f4eec54c0bf30..b4e4bec6a4c0edaf8615d9673e1aedc5422e94d0 100644
+--- a/config/scripts/build-provenance.test.mjs
++++ b/config/scripts/build-provenance.test.mjs
+@@ -1,5 +1,6 @@
+ import { execFileSync } from 'node:child_process'
+-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { createHash } from 'node:crypto'
++import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { describe, expect, it } from 'vitest'
+@@ -8,6 +9,25 @@ import provenance from './build-provenance.cjs'
+ 
+ const { readWorkbenchCommit, writeBuildProvenance } = provenance
+ 
++const SERIES_DIGEST = createHash('sha256').update('synthetic hos series').digest('hex')
++const BUILD_DIGEST = createHash('sha256').update('synthetic hos build').digest('hex')
++
++function withEnv(values, check) {
++  const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]))
++  try {
++    for (const [key, value] of Object.entries(values)) {
++      if (value === undefined) delete process.env[key]
++      else process.env[key] = value
++    }
++    return check()
++  } finally {
++    for (const [key, value] of Object.entries(saved)) {
++      if (value === undefined) delete process.env[key]
++      else process.env[key] = value
++    }
++  }
++}
++
+ function withWorkbench(check) {
+   const root = mkdtempSync(join(tmpdir(), 'orca-build-provenance-'))
+   const cwd = join(root, 'workbench')
+@@ -49,36 +69,78 @@ describe('workbench build provenance', () => {
+       const head = git('rev-parse', 'HEAD')
+       expect(head).not.toBe(upstream)
+       expect(readWorkbenchCommit(cwd)).toBe(head)
+-      const oldBuildCommit = process.env.ORCA_BUILD_COMMIT
+-      const oldGithubSha = process.env.GITHUB_SHA
+-      process.env.ORCA_BUILD_COMMIT = upstream
+-      process.env.GITHUB_SHA = upstream
+-      try {
+-        const identity = getLocalBuildIdentity({ cwd, timestamp: 123456 })
+-        expect(identity.commit).toBe(head)
+-        expect(identity.version).toBe(`1.4.215-local.123456.${head.slice(0, 12)}`)
+-        for (const [platform, architecture, filename] of [
+-          ['darwin', 'arm64', 'orca-local-build.json'],
+-          ['linux', 'x64', 'orca-fork-build.json']
+-        ]) {
+-          const resources = join(root, platform, 'resources')
+-          mkdirSync(resources, { recursive: true })
+-          writeBuildProvenance(resources, { platform, architecture, version: identity.version }, cwd)
+-          const stamp = JSON.parse(readFileSync(join(resources, filename), 'utf8'))
+-          expect(stamp.commit).toBe(head)
+-          expect(stamp.platform).toBe(platform)
+-          expect(stamp.architecture).toBe(architecture)
+-          expect(stamp.version).toBe(identity.version)
++      withEnv(
++        {
++          ORCA_BUILD_COMMIT: upstream,
++          GITHUB_SHA: upstream,
++          HOS_SERIES_DIGEST: SERIES_DIGEST,
++          HOS_BUILD_DIGEST: BUILD_DIGEST
++        },
++        () => {
++          const identity = getLocalBuildIdentity({ cwd, timestamp: 123456 })
++          expect(identity.commit).toBe(head)
++          expect(identity.version).toBe(`1.4.215-local.123456.${head.slice(0, 12)}`)
++          for (const [platform, architecture, filename] of [
++            ['darwin', 'arm64', 'orca-local-build.json'],
++            ['linux', 'x64', 'orca-fork-build.json']
++          ]) {
++            const resources = join(root, platform, 'resources')
++            mkdirSync(resources, { recursive: true })
++            writeBuildProvenance(resources, { platform, architecture, version: identity.version }, cwd)
++            const stamp = JSON.parse(readFileSync(join(resources, filename), 'utf8'))
++            expect(stamp.commit).toBe(head)
++            expect(stamp.platform).toBe(platform)
++            expect(stamp.architecture).toBe(architecture)
++            expect(stamp.version).toBe(identity.version)
++            if (platform === 'linux') {
++              expect(stamp.series).toBe(SERIES_DIGEST)
++              expect(stamp.build).toBe(BUILD_DIGEST)
++            }
++          }
+         }
+-      } finally {
+-        if (oldBuildCommit === undefined) delete process.env.ORCA_BUILD_COMMIT
+-        else process.env.ORCA_BUILD_COMMIT = oldBuildCommit
+-        if (oldGithubSha === undefined) delete process.env.GITHUB_SHA
+-        else process.env.GITHUB_SHA = oldGithubSha
++      )
++    })
++  })
++
++  it('refuses to stamp Linux without well-formed series and build digests', () => {
++    withWorkbench(({ cwd, root }) => {
++      const cases = [
++        ['series absent', { HOS_SERIES_DIGEST: undefined, HOS_BUILD_DIGEST: BUILD_DIGEST }],
++        ['build absent', { HOS_SERIES_DIGEST: SERIES_DIGEST, HOS_BUILD_DIGEST: undefined }],
++        ['series empty', { HOS_SERIES_DIGEST: '', HOS_BUILD_DIGEST: BUILD_DIGEST }],
++        ['series uppercase', { HOS_SERIES_DIGEST: SERIES_DIGEST.toUpperCase(), HOS_BUILD_DIGEST: BUILD_DIGEST }],
++        ['build uppercase', { HOS_SERIES_DIGEST: SERIES_DIGEST, HOS_BUILD_DIGEST: BUILD_DIGEST.toUpperCase() }],
++        ['series short', { HOS_SERIES_DIGEST: SERIES_DIGEST.slice(1), HOS_BUILD_DIGEST: BUILD_DIGEST }],
++        ['build long', { HOS_SERIES_DIGEST: SERIES_DIGEST, HOS_BUILD_DIGEST: `${BUILD_DIGEST}0` }],
++        ['build non-hex', { HOS_SERIES_DIGEST: SERIES_DIGEST, HOS_BUILD_DIGEST: `${BUILD_DIGEST.slice(1)}g` }],
++        ['series padded', { HOS_SERIES_DIGEST: ` ${SERIES_DIGEST}`, HOS_BUILD_DIGEST: BUILD_DIGEST }],
++        ['build trailing newline', { HOS_SERIES_DIGEST: SERIES_DIGEST, HOS_BUILD_DIGEST: `${BUILD_DIGEST}\n` }]
++      ]
++      for (const [label, env] of cases) {
++        const resources = join(root, label.replaceAll(' ', '-'), 'resources')
++        mkdirSync(resources, { recursive: true })
++        withEnv(env, () => {
++          expect(
++            () => writeBuildProvenance(resources, { platform: 'linux', architecture: 'x64', version: '1.4.215' }, cwd),
++            label
++          ).toThrow(/HOS_(SERIES|BUILD)_DIGEST/)
++        })
++        expect(existsSync(join(resources, 'orca-fork-build.json')), label).toBe(false)
+       }
+     })
+   })
+ 
++  it('keeps local macOS stamping independent of the Linux digest variables', () => {
++    withWorkbench(({ cwd, root }) => {
++      const resources = join(root, 'darwin-local', 'resources')
++      mkdirSync(resources, { recursive: true })
++      withEnv({ HOS_SERIES_DIGEST: undefined, HOS_BUILD_DIGEST: undefined }, () => {
++        writeBuildProvenance(resources, { platform: 'darwin', architecture: 'arm64', version: '1.4.215' }, cwd)
++      })
++      expect(existsSync(join(resources, 'orca-local-build.json'))).toBe(true)
++    })
++  })
++
+   it('refuses a repository without a committed HEAD instead of inventing an identity', () => {
+     withWorkbench(({ root, git }) => {
+       const unborn = join(root, 'unborn')

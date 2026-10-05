@@ -1,0 +1,1307 @@
+# Orca v1.4.215. netcup-vie builds the desktop .deb, which U6 qualifies after these gates. The Mac app
+# builds unsigned on the hosted runner, whose loopback is its own, so its native network gates run there;
+# the operator Mac signs it with Orca Dev and verifies each bundle's designated requirement (ADR 0014).
+[upstream]
+repository = "stablyai/orca"
+tagScheme = "v{version}"
+
+[platforms.linux-x64]
+host = "netcup-vie"
+[platforms.linux-x64.toolchain]
+node = "24.21.0"
+pnpm = "12.0.0"
+[[platforms.linux-x64.dependencies]]
+manager = "pnpm"
+lockfile = "pnpm-lock.yaml"
+# mobile/ is its own pnpm project (upstream .github/actions/install-mobile-dependencies): the root
+# install leaves mobile/node_modules empty and `build:mobile-web` cannot resolve React Native or
+# Expo. Its postinstall generates source the bundle imports, so it runs with scripts.
+[[platforms.linux-x64.dependencies]]
+manager = "pnpm"
+cwd = "mobile"
+lockfile = "pnpm-lock.yaml"
+# `build:linux` spelled out step by step: upstream's `typecheck` sizes its parallel tsc batch by
+# os.totalmem() (the host's 31 GB, not the job's cgroup), so all three projects (15 GiB of heap)
+# ran at once and the job slice was OOM-killed at 12G and again at 18G (2026-10-03). Run in
+# sequence, the peak is one project's.
+[[platforms.linux-x64.steps]]
+id = "typecheck-node"
+argv = ["pnpm", "run", "typecheck:node"]
+[[platforms.linux-x64.steps]]
+id = "typecheck-web"
+argv = ["pnpm", "run", "typecheck:web"]
+[[platforms.linux-x64.steps]]
+id = "typecheck-cli"
+argv = ["pnpm", "run", "typecheck:cli"]
+[[platforms.linux-x64.steps]]
+id = "relay"
+argv = ["pnpm", "run", "build:relay"]
+[[platforms.linux-x64.steps]]
+id = "cli"
+argv = ["pnpm", "run", "build:cli"]
+[[platforms.linux-x64.steps]]
+id = "electron-vite"
+argv = ["pnpm", "run", "build:electron-vite"]
+[[platforms.linux-x64.steps]]
+id = "skills-cli"
+argv = ["pnpm", "run", "verify:built-skills-cli"]
+[[platforms.linux-x64.steps]]
+id = "web"
+argv = ["pnpm", "run", "build:web-from-renderer"]
+[[platforms.linux-x64.steps]]
+id = "mobile-web"
+argv = ["pnpm", "run", "build:mobile-web"]
+[[platforms.linux-x64.steps]]
+id = "electron-runtime"
+argv = ["pnpm", "run", "ensure:electron-runtime"]
+[[platforms.linux-x64.steps]]
+# build-linux-local.mjs runs `electron-builder --linux AppImage deb rpm --x64`; the release ships only the deb
+# (the one declared artifact), and rpm would need rpmbuild. Same command, deb alone, never publishing.
+id = "desktop"
+argv = ["pnpm", "exec", "electron-builder", "--config", "config/electron-builder.config.cjs", "--linux", "deb", "--x64", "--publish", "never"]
+[[platforms.linux-x64.steps]]
+id = "renderer-boot"
+argv = ["node", "config/scripts/verify-renderer-boot-graph.mjs"]
+[[platforms.linux-x64.artifacts]]
+id = "desktop"
+path = "dist/orca-linux-x64.deb"
+kind = "native"
+
+[platforms.macos-arm64]
+runner = { repository = "flosrn/orca-build", label = "macos-15" }
+[platforms.macos-arm64.toolchain]
+node = "24.21.0"
+pnpm = "12.0.0"
+[[platforms.macos-arm64.dependencies]]
+manager = "pnpm"
+lockfile = "pnpm-lock.yaml"
+[[platforms.macos-arm64.dependencies]]
+manager = "pnpm"
+cwd = "mobile"
+lockfile = "pnpm-lock.yaml"
+[[platforms.macos-arm64.steps]]
+id = "desktop"
+argv = ["pnpm", "run", "build:mac"]
+[[platforms.macos-arm64.steps]]
+id = "renderer-boot"
+argv = ["node", "config/scripts/verify-renderer-boot-graph.mjs"]
+[[platforms.macos-arm64.artifacts]]
+id = "desktop"
+path = "dist/orca-macos-arm64.zip"
+kind = "native-zip"
+
+[[gate.tests]]
+id = "config/scripts/build-linux-local.test.mjs"
+files = ["config/scripts/build-linux-local.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/build-linux-local.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/build-mac-local.test.mjs"
+files = ["config/scripts/build-mac-local.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/build-mac-local.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/build-provenance.test.mjs"
+files = ["config/scripts/build-provenance.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/build-provenance.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/electron-builder-config.test.mjs"
+files = ["config/scripts/electron-builder-config.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/electron-builder-config.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/electron-builder-mac-channel-config.test.mjs"
+files = ["config/scripts/electron-builder-mac-channel-config.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/electron-builder-mac-channel-config.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/ensure-native-runtime.test.mjs"
+files = ["config/scripts/ensure-native-runtime.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/ensure-native-runtime.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs"
+files = ["config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/mac-build-compatibility.test.mjs"
+files = ["config/scripts/mac-build-compatibility.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/mac-build-compatibility.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/renderer-boot-graph.test.mjs"
+files = ["config/scripts/renderer-boot-graph.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/renderer-boot-graph.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/verify-dev-channel-packaging.test.mjs"
+files = ["config/scripts/verify-dev-channel-packaging.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/verify-dev-channel-packaging.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/windows-cmd-shim-spawn-boundary.test.mjs"
+files = ["config/scripts/windows-cmd-shim-spawn-boundary.test.mjs"]
+touched = ["config/electron-builder.config.cjs","config/scripts/build-*.mjs","config/scripts/ensure-native-runtime.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/windows-cmd-shim-spawn-boundary.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/cli/handlers/core.test.ts"
+files = ["src/cli/handlers/core.test.ts"]
+touched = ["src/cli/handlers/core.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/cli/handlers/core.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/cli/index-serve-command.test.ts"
+files = ["src/cli/index-serve-command.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/cli/index-serve-command.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/cli/runtime/launch.test.ts"
+files = ["src/cli/runtime/launch.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/cli/runtime/launch.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/claude-managed-auth-storage-remove.test.ts"
+files = ["src/main/claude-accounts/claude-managed-auth-storage-remove.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/claude-managed-auth-storage-remove.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/claude-structured-auth-policy.test.ts"
+files = ["src/main/claude-accounts/claude-structured-auth-policy.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/claude-structured-auth-policy.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/host-account-isolation-smoke.test.ts"
+files = ["src/main/claude-accounts/host-account-isolation-smoke.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/host-account-isolation-smoke.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/live-pty-gate-foreground-release.test.ts"
+files = ["src/main/claude-accounts/live-pty-gate-foreground-release.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/live-pty-gate-foreground-release.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/live-pty-gate-persisted-bindings.test.ts"
+files = ["src/main/claude-accounts/live-pty-gate-persisted-bindings.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/live-pty-gate-persisted-bindings.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/live-pty-gate.test.ts"
+files = ["src/main/claude-accounts/live-pty-gate.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/live-pty-gate.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/oauth-refresh.test.ts"
+files = ["src/main/claude-accounts/oauth-refresh.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/oauth-refresh.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-account-switching.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-account-switching.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-account-switching.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-config-dir-launch.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-config-dir-launch.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-config-dir-launch.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-deselect-restore.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-deselect-restore.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-deselect-restore.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-host-account-isolation.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-host-account-isolation.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-host-account-isolation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-keychain-snapshots.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-keychain-snapshots.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-keychain-snapshots.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-launch-refresh.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-launch-refresh.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-launch-refresh.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-materialization.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-materialization.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-materialization.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-readback-identity.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-readback-identity.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-readback-identity.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-rollback-pin.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-rollback-pin.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-rollback-pin.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-auth-service-snapshot-validation.test.ts"
+files = ["src/main/claude-accounts/runtime-auth-service-snapshot-validation.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-auth-service-snapshot-validation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude-accounts/runtime-paths.test.ts"
+files = ["src/main/claude-accounts/runtime-paths.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude-accounts/runtime-paths.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude/claude-config-dir-pin.test.ts"
+files = ["src/main/claude/claude-config-dir-pin.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude/claude-config-dir-pin.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude/claude-model-catalog-probe.test.ts"
+files = ["src/main/claude/claude-model-catalog-probe.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude/claude-model-catalog-probe.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude/claude-stream-json-connection.test.ts"
+files = ["src/main/claude/claude-stream-json-connection.test.ts"]
+touched = ["src/main/claude/claude-stream-json-connection.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude/claude-stream-json-connection.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude/claude-structured-launch-resolution.test.ts"
+files = ["src/main/claude/claude-structured-launch-resolution.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude/claude-structured-launch-resolution.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/claude/claude-structured-session-adapter.test.ts"
+files = ["src/main/claude/claude-structured-session-adapter.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/claude/claude-structured-session-adapter.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/codex/codex-persistent-command-retention.test.ts"
+files = ["src/main/codex/codex-persistent-command-retention.test.ts"]
+touched = ["src/main/daemon/daemon-init-dependency-mocks.ts","src/main/daemon/daemon-init-mock-types.ts","src/main/daemon/daemon-init-test-harness.ts","src/main/daemon/daemon-provider-init.ts","src/main/ipc/command-path-resolver.ts","src/main/ipc/pty/ipc/inspect.ts","src/main/ipc/pty/ipc/spawn-commit.ts","src/main/ipc/pty/runtime/spawn-commit.ts","src/main/pty/posix-pty-descendant-process-groups.ts","src/main/pty/posix-pty-process-groups.ts","src/main/runtime/dec-private-mode-chunk.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/codex/codex-persistent-command-retention.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/daemon/daemon-init-provider-installation.test.ts"
+files = ["src/main/daemon/daemon-init-provider-installation.test.ts"]
+touched = ["src/main/daemon/daemon-init-dependency-mocks.ts","src/main/daemon/daemon-init-mock-types.ts","src/main/daemon/daemon-init-test-harness.ts","src/main/daemon/daemon-provider-init.ts","src/main/ipc/command-path-resolver.ts","src/main/ipc/pty/ipc/inspect.ts","src/main/ipc/pty/ipc/spawn-commit.ts","src/main/ipc/pty/runtime/spawn-commit.ts","src/main/pty/posix-pty-descendant-process-groups.ts","src/main/pty/posix-pty-process-groups.ts","src/main/runtime/dec-private-mode-chunk.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/daemon/daemon-init-provider-installation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/command-path-resolver.test.ts"
+files = ["src/main/ipc/command-path-resolver.test.ts"]
+touched = ["src/main/ipc/command-path-resolver.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/command-path-resolver.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/pty-session-liveness-and-ownership.test.ts"
+files = ["src/main/ipc/pty-session-liveness-and-ownership.test.ts"]
+touched = ["src/main/daemon/daemon-init-dependency-mocks.ts","src/main/daemon/daemon-init-mock-types.ts","src/main/daemon/daemon-init-test-harness.ts","src/main/daemon/daemon-provider-init.ts","src/main/ipc/command-path-resolver.ts","src/main/ipc/pty/ipc/inspect.ts","src/main/ipc/pty/ipc/spawn-commit.ts","src/main/ipc/pty/runtime/spawn-commit.ts","src/main/pty/posix-pty-descendant-process-groups.ts","src/main/pty/posix-pty-process-groups.ts","src/main/runtime/dec-private-mode-chunk.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/pty-session-liveness-and-ownership.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/pty-spawn-env-agent-overlays.test.ts"
+files = ["src/main/ipc/pty-spawn-env-agent-overlays.test.ts"]
+touched = ["src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/pty-spawn-env-agent-overlays.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/pty-spawn-env-terminal-basics.test.ts"
+files = ["src/main/ipc/pty-spawn-env-terminal-basics.test.ts"]
+touched = ["src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/pty-spawn-env-terminal-basics.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/rate-limits.test.ts"
+files = ["src/main/ipc/rate-limits.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/rate-limits.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts"
+files = ["src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts"]
+touched = ["src/main/daemon/daemon-init-dependency-mocks.ts","src/main/daemon/daemon-init-mock-types.ts","src/main/daemon/daemon-init-test-harness.ts","src/main/daemon/daemon-provider-init.ts","src/main/ipc/command-path-resolver.ts","src/main/ipc/pty/ipc/inspect.ts","src/main/ipc/pty/ipc/spawn-commit.ts","src/main/ipc/pty/runtime/spawn-commit.ts","src/main/pty/posix-pty-descendant-process-groups.ts","src/main/pty/posix-pty-process-groups.ts","src/main/runtime/dec-private-mode-chunk.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/persistence-worktree-lineage-and-backups.test.ts"
+files = ["src/main/persistence-worktree-lineage-and-backups.test.ts"]
+touched = ["src/main/persistence/leasing-ssh-ptys/ssh-target-state.ts","src/main/persistence/loading-store/normalize-loaded-profile-state.ts","src/main/persistence/loading-store/ssh-profile-operations.ts","src/main/persistence/restoring-sessions/pane-alias-normalization.ts","src/renderer/src/runtime/use-worktree-runtime-target.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/persistence-worktree-lineage-and-backups.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/persistence/restoring-sessions/pane-alias-normalization.test.ts"
+files = ["src/main/persistence/restoring-sessions/pane-alias-normalization.test.ts"]
+touched = ["src/main/persistence/restoring-sessions/pane-alias-normalization.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/persistence/restoring-sessions/pane-alias-normalization.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-completion-delivery.test.ts"
+files = ["src/main/pi/agent-status-completion-delivery.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-completion-delivery.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-async-subagents.test.ts"
+files = ["src/main/pi/agent-status-extension-async-subagents.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-async-subagents.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-nested-run-settlement.test.ts"
+files = ["src/main/pi/agent-status-extension-nested-run-settlement.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-nested-run-settlement.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-omp-lifecycle.test.ts"
+files = ["src/main/pi/agent-status-extension-omp-lifecycle.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-omp-lifecycle.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-omp-model.test.ts"
+files = ["src/main/pi/agent-status-extension-omp-model.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-omp-model.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-omp-prefill.test.ts"
+files = ["src/main/pi/agent-status-extension-omp-prefill.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-omp-prefill.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-extension-source.test.ts"
+files = ["src/main/pi/agent-status-extension-source.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-extension-source.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-input-redaction.test.ts"
+files = ["src/main/pi/agent-status-input-redaction.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-input-redaction.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-omp-approval-forwarding.test.ts"
+files = ["src/main/pi/agent-status-omp-approval-forwarding.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-omp-approval-forwarding.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-owner-recovery.test.ts"
+files = ["src/main/pi/agent-status-owner-recovery.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-owner-recovery.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/agent-status-ui-prompt.test.ts"
+files = ["src/main/pi/agent-status-ui-prompt.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/agent-status-ui-prompt.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/omp-model-command-source.test.ts"
+files = ["src/main/pi/omp-model-command-source.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/omp-model-command-source.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/omp-session-status-owner.test.ts"
+files = ["src/main/pi/omp-session-status-owner.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/omp-session-status-owner.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/omp-transcript-metadata.test.ts"
+files = ["src/main/pi/omp-transcript-metadata.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/omp-transcript-metadata.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/prefill-extension-source.test.ts"
+files = ["src/main/pi/prefill-extension-source.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/prefill-extension-source.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/titlebar-extension-overlay-path.test.ts"
+files = ["src/main/pi/titlebar-extension-overlay-path.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/titlebar-extension-overlay-path.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/titlebar-extension-service.test.ts"
+files = ["src/main/pi/titlebar-extension-service.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/titlebar-extension-service.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pi/titlebar-extension-source.test.ts"
+files = ["src/main/pi/titlebar-extension-source.test.ts"]
+touched = ["src/main/pi/**","src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pi/titlebar-extension-source.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/pty/posix-pty-process-groups.test.ts"
+files = ["src/main/pty/posix-pty-process-groups.test.ts"]
+touched = ["src/main/daemon/daemon-init-dependency-mocks.ts","src/main/daemon/daemon-init-mock-types.ts","src/main/daemon/daemon-init-test-harness.ts","src/main/daemon/daemon-provider-init.ts","src/main/ipc/command-path-resolver.ts","src/main/ipc/pty/ipc/inspect.ts","src/main/ipc/pty/ipc/spawn-commit.ts","src/main/ipc/pty/runtime/spawn-commit.ts","src/main/pty/posix-pty-descendant-process-groups.ts","src/main/pty/posix-pty-process-groups.ts","src/main/runtime/dec-private-mode-chunk.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/pty/posix-pty-process-groups.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts"
+files = ["src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/claude-oauth-usage-error.test.ts"
+files = ["src/main/rate-limits/claude-oauth-usage-error.test.ts"]
+touched = ["src/main/rate-limits/claude-oauth-usage-error.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/claude-oauth-usage-error.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/claude-pty.test.ts"
+files = ["src/main/rate-limits/claude-pty.test.ts"]
+touched = ["src/main/rate-limits/claude-pty.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/claude-pty.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/claude-usage-poll-budget.test.ts"
+files = ["src/main/rate-limits/claude-usage-poll-budget.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/claude-usage-poll-budget.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/codexbar-cli-source.test.ts"
+files = ["src/main/rate-limits/codexbar-cli-source.test.ts"]
+touched = ["src/main/rate-limits/codexbar-cli-source.ts","src/main/rate-limits/codexbar-usage-mapper.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/codexbar-cli-source.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/codexbar-usage-mapper.test.ts"
+files = ["src/main/rate-limits/codexbar-usage-mapper.test.ts"]
+touched = ["src/main/rate-limits/codexbar-cli-source.ts","src/main/rate-limits/codexbar-usage-mapper.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/codexbar-usage-mapper.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-account-target-selection.test.ts"
+files = ["src/main/rate-limits/service-account-target-selection.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-account-target-selection.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-antigravity-usage.test.ts"
+files = ["src/main/rate-limits/service-antigravity-usage.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-antigravity-usage.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-cursor-usage.test.ts"
+files = ["src/main/rate-limits/service-cursor-usage.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-cursor-usage.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-inactive-account-previews.test.ts"
+files = ["src/main/rate-limits/service-inactive-account-previews.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-inactive-account-previews.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-live-claude-usage.test.ts"
+files = ["src/main/rate-limits/service-live-claude-usage.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-live-claude-usage.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-minimax-usage.test.ts"
+files = ["src/main/rate-limits/service-minimax-usage.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-minimax-usage.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-refresh-orchestration.test.ts"
+files = ["src/main/rate-limits/service-refresh-orchestration.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-refresh-orchestration.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/rate-limits/service-window-activation.test.ts"
+files = ["src/main/rate-limits/service-window-activation.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/rate-limits/service-window-activation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/dispatch-obsolete-session-restore.test.ts"
+files = ["src/main/runtime/dispatch-obsolete-session-restore.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/dispatch-obsolete-session-restore.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/orca-runtime-terminal-close-continuity.test.ts"
+files = ["src/main/runtime/orca-runtime-terminal-close-continuity.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/orca-runtime-terminal-close-continuity.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/orchestration/cli-command.test.ts"
+files = ["src/main/runtime/orchestration/cli-command.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/orchestration/cli-command.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.test.ts"
+files = ["src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration-worker-mode-opacity.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration-worker-mode-opacity.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration-worker-mode-opacity.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration-worker-start-mode-selection.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration-worker-start-mode-selection.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration-worker-start-mode-selection.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/federation/federation-output.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/federation/federation-output.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/federation/federation-output.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/messaging/check.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/messaging/check.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/messaging/check.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/worker/composed-workers.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/worker/composed-workers.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/worker/composed-workers.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/worker/worker-release-mobile-report.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/worker/worker-release-mobile-report.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/worker/worker-release-mobile-report.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/worker/worker-release-recovery.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/worker/worker-release-recovery.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/worker/worker-release-recovery.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/orchestration/worker/worker-terminal-custody-at-creation.test.ts"
+files = ["src/main/runtime/rpc/methods/orchestration/worker/worker-terminal-custody-at-creation.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/orchestration/worker/worker-terminal-custody-at-creation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/methods/status.test.ts"
+files = ["src/main/runtime/rpc/methods/status.test.ts"]
+touched = ["src/main/runtime/rpc/methods/status.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/methods/status.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/orchestration-mutation-executor.test.ts"
+files = ["src/main/runtime/rpc/orchestration-mutation-executor.test.ts"]
+touched = ["src/main/runtime/rpc/orchestration-mutation-executor.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/orchestration-mutation-executor.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/orchestration-mutation-ledger.test.ts"
+files = ["src/main/runtime/rpc/orchestration-mutation-ledger.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/orchestration-mutation-ledger.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/rpc/unix-socket-transport.test.ts"
+files = ["src/main/runtime/rpc/unix-socket-transport.test.ts"]
+touched = ["src/main/runtime/rpc/unix-socket-transport.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/rpc/unix-socket-transport.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/runtime-rpc-browser-host-admission.test.ts"
+files = ["src/main/runtime/runtime-rpc-browser-host-admission.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/runtime-rpc-browser-host-admission.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/runtime-rpc-long-poll-capacity.test.ts"
+files = ["src/main/runtime/runtime-rpc-long-poll-capacity.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/runtime-rpc-long-poll-capacity.test.ts"]
+network = "native"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/runtime-rpc-websocket-bind-host.test.ts"
+files = ["src/main/runtime/runtime-rpc-websocket-bind-host.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/runtime-rpc-websocket-bind-host.test.ts"]
+network = "native"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts"
+files = ["src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/structured-agent-session-runtime.test.ts"
+files = ["src/main/runtime/structured-agent-session-runtime.test.ts"]
+touched = ["src/main/runtime/structured-agent-session-runtime.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/structured-agent-session-runtime.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/structured-claude-auth-policy-wiring.test.ts"
+files = ["src/main/runtime/structured-claude-auth-policy-wiring.test.ts"]
+touched = ["src/main/claude-accounts/account-config-dir-resources.ts","src/main/claude-accounts/claude-managed-auth-storage.ts","src/main/claude-accounts/claude-structured-auth-policy.ts","src/main/claude-accounts/environment.ts","src/main/claude-accounts/live-pty-gate-foreground-release.ts","src/main/claude-accounts/live-pty-gate.ts","src/main/claude-accounts/managed-auth-path.ts","src/main/claude-accounts/oauth-refresh.ts","src/main/claude-accounts/runtime-auth-service-test-harness.ts","src/main/claude-accounts/runtime-auth-service.ts","src/main/claude-accounts/runtime-auth/runtime-auth-file-storage.ts","src/main/claude-accounts/runtime-auth/runtime-auth-legacy-surface.ts","src/main/claude-accounts/runtime-auth/runtime-auth-preparation.ts","src/main/claude-accounts/runtime-auth/runtime-auth-readback.ts","src/main/claude-accounts/runtime-auth/runtime-auth-runtime-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-snapshot-restore.ts","src/main/claude-accounts/runtime-auth/runtime-auth-state.ts","src/main/claude-accounts/runtime-auth/runtime-auth-sync.ts","src/main/claude-accounts/runtime-auth/runtime-auth-types.ts","src/main/claude-accounts/runtime-paths.ts","src/main/claude-accounts/service.ts","src/main/claude/claude-config-dir-pin.ts","src/main/claude/claude-model-catalog-probe.ts","src/main/claude/claude-stream-json-connection.ts","src/main/claude/claude-structured-launch-resolution.ts","src/main/claude/claude-structured-session-acquisition.ts","src/main/runtime/runtime-account-controller.ts","src/main/runtime/structured-agent-session-runtime.ts","src/main/runtime/structured-claude-runtime-adapter.ts","src/main/startup/main-process-account-services.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/structured-claude-auth-policy-wiring.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/terminal-pane-recovery-obsolete-dispatch.test.ts"
+files = ["src/main/runtime/terminal-pane-recovery-obsolete-dispatch.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/terminal-pane-recovery-obsolete-dispatch.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/runtime/terminal-wait-omp-mode-refresh.test.ts"
+files = ["src/main/runtime/terminal-wait-omp-mode-refresh.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/runtime/terminal-wait-omp-mode-refresh.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/startup/serve-mode-argv.test.ts"
+files = ["src/main/startup/serve-mode-argv.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/startup/serve-mode-argv.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/startup/serve-options.test.ts"
+files = ["src/main/startup/serve-options.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/startup/serve-options.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/settings/appearance-status-bar-search.test.ts"
+files = ["src/renderer/src/components/settings/appearance-status-bar-search.test.ts"]
+touched = ["src/renderer/src/components/settings/appearance-status-bar-search.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/settings/appearance-status-bar-search.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx"
+files = ["src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx"
+files = ["src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx"
+files = ["src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/provider-segment-monthly-window.test.tsx"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts"
+files = ["src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/tooltip.test.ts"
+files = ["src/renderer/src/components/status-bar/tooltip.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/tooltip.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-account-segments.test.ts"
+files = ["src/renderer/src/components/status-bar/usage-account-segments.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-account-segments.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-error-copy.test.ts"
+files = ["src/renderer/src/components/status-bar/usage-error-copy.test.ts"]
+touched = ["src/renderer/src/components/status-bar/usage-error-copy.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-error-copy.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-provider-settings-target.test.ts"
+files = ["src/renderer/src/components/status-bar/usage-provider-settings-target.test.ts"]
+touched = ["src/renderer/src/components/status-bar/usage-provider-settings-target.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-provider-settings-target.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx"
+files = ["src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-roster-account-rows.test.tsx"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-roster-row-state.test.ts"
+files = ["src/renderer/src/components/status-bar/usage-roster-row-state.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-roster-row-state.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx"
+files = ["src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-roster-stale-rows.test.tsx"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/components/status-bar/usage-stale-sample.test.ts"
+files = ["src/renderer/src/components/status-bar/usage-stale-sample.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/components/status-bar/usage-stale-sample.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/runtime/use-worktree-runtime-target.test.ts"
+files = ["src/renderer/src/runtime/use-worktree-runtime-target.test.ts"]
+touched = ["src/main/persistence/leasing-ssh-ptys/ssh-target-state.ts","src/main/persistence/loading-store/normalize-loaded-profile-state.ts","src/main/persistence/loading-store/ssh-profile-operations.ts","src/main/persistence/restoring-sessions/pane-alias-normalization.ts","src/renderer/src/runtime/use-worktree-runtime-target.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/runtime/use-worktree-runtime-target.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts"
+files = ["src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts"]
+touched = ["src/main/persistence/leasing-ssh-ptys/ssh-target-state.ts","src/main/persistence/loading-store/normalize-loaded-profile-state.ts","src/main/persistence/loading-store/ssh-profile-operations.ts","src/main/persistence/restoring-sessions/pane-alias-normalization.ts","src/renderer/src/runtime/use-worktree-runtime-target.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/store/slices/rate-limits.test.ts"
+files = ["src/renderer/src/store/slices/rate-limits.test.ts"]
+touched = ["src/renderer/src/store/slices/rate-limits.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/store/slices/rate-limits.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts"
+files = ["src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/shared/constants.test.ts"
+files = ["src/shared/constants.test.ts"]
+touched = ["src/shared/constants.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/shared/constants.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/shared/managed-account-usage-roster.test.ts"
+files = ["src/shared/managed-account-usage-roster.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/shared/managed-account-usage-roster.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/shared/orchestration-check-output.test.ts"
+files = ["src/shared/orchestration-check-output.test.ts"]
+touched = ["src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/shared/orchestration-check-output.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/shared/rate-limit-types.test.ts"
+files = ["src/shared/rate-limit-types.test.ts"]
+touched = ["src/main/ipc/rate-limits.ts","src/main/rate-limits/claude-active-usage-fetch.ts","src/main/rate-limits/claude-auth-diagnostics-log.ts","src/main/rate-limits/claude-cli-usage-fetch.ts","src/main/rate-limits/claude-fetcher-test-harness.ts","src/main/rate-limits/claude-managed-account-credentials.ts","src/main/rate-limits/claude-managed-account-usage.ts","src/main/rate-limits/claude-managed-usage-panel.ts","src/main/rate-limits/claude-oauth-credentials.ts","src/main/rate-limits/claude-oauth-recovery.ts","src/main/rate-limits/claude-oauth-usage-error.ts","src/main/rate-limits/claude-oauth-usage-request.ts","src/main/rate-limits/claude-pty-usage-parser.ts","src/main/rate-limits/claude-pty.ts","src/main/rate-limits/claude-usage-poll-budget.ts","src/main/rate-limits/claude-usage-result.ts","src/main/rate-limits/service/service-account-refresh.ts","src/main/rate-limits/service/service-configuration.ts","src/main/rate-limits/service/service-fetch-queue.ts","src/main/rate-limits/service/service-full-cycle-application.ts","src/main/rate-limits/service/service-full-cycle-preparation.ts","src/main/rate-limits/service/service-inactive-accounts.ts","src/main/rate-limits/service/service-polling.ts","src/main/rate-limits/service/service-provider-cycles.ts","src/main/rate-limits/service/service-result-policy.ts","src/main/rate-limits/service/service-state.ts","src/main/rate-limits/service/service-types.ts","src/preload/api/agent-usage-api.ts","src/preload/api/rate-limits-bridge.ts","src/renderer/src/store/slices/rate-limits.ts","src/renderer/src/web/preload-api/web-rate-limits-api.ts","src/shared/managed-account-usage-roster.ts","src/shared/rate-limit-state-factory.ts","src/shared/rate-limit-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/shared/rate-limit-types.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/shared/serve-option-validation.test.ts"
+files = ["src/shared/serve-option-validation.test.ts"]
+touched = ["src/cli/handlers/core.ts","src/cli/root-help-text-secondary.ts","src/cli/runtime/launch.ts","src/cli/specs/serve.ts","src/main/runtime/rpc/methods/status.ts","src/main/runtime/rpc/unix-socket-transport.ts","src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts","src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts","src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts","src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts","src/main/runtime/runtime-rpc/runtime-rpc-state.ts","src/main/startup/main-process-ready-foundation.ts","src/main/startup/main-process-runtime-launch.ts","src/main/startup/serve-mode-argv.ts","src/main/startup/serve-options.ts","src/shared/serve-option-validation.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/shared/serve-option-validation.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "tests/e2e/completed-worker-retirement-resume.unit.test.ts"
+files = ["tests/e2e/completed-worker-retirement-resume.unit.test.ts"]
+touched = ["skill-guides/orchestration/references/messaging-and-gates.md","src/cli/bundled-skill-guides.ts","src/main/runtime/dispatch-obsolete-session-restore.ts","src/main/runtime/orca-runtime-core.ts","src/main/runtime/orca-runtime-get-orchestration-dispatch-authority.ts","src/main/runtime/orca-runtime-get-worktree-ps.ts","src/main/runtime/orca-runtime-on-pty-data.ts","src/main/runtime/orca-runtime-reconcile-headless-mobile-session-browser-tabs.ts","src/main/runtime/orca-runtime-resolve-terminal-pane.ts","src/main/runtime/orca-runtime-stop-explicitly-closed-tab-ptys.ts","src/main/runtime/orchestration/cli-command.ts","src/main/runtime/orchestration/db/attach-orchestration-db-methods.ts","src/main/runtime/orchestration/db/orchestration-db-methods.ts","src/main/runtime/orchestration/db/worker-dispatch/worker-dispatch-argv-authority.ts","src/main/runtime/orchestration/db/worker-terminal/failed-start-dispatch-identity.ts","src/main/runtime/rpc/methods/orchestration/messaging/mailbox-message-receipt.ts","src/main/runtime/rpc/methods/orchestration/worker/local-worker-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-argv-start.ts","src/main/runtime/rpc/methods/orchestration/worker/worker-release.test-support.ts","src/main/runtime/rpc/orchestration-mutation-executor.ts","src/shared/orchestration-check-output.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","tests/e2e/completed-worker-retirement-resume.unit.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "tests/e2e/status-bar-provider-account-meters.spec.ts"
+files = ["tests/e2e/status-bar-provider-account-meters.spec.ts","tests/e2e/global-setup.ts"]
+touched = ["config/scripts/locale-value-overrides.mjs","src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx","src/renderer/src/components/settings/appearance-status-bar-codexbar-toggle-search.ts","src/renderer/src/components/settings/appearance-status-bar-search.ts","src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx","src/renderer/src/components/status-bar/StatusBarSurface.tsx","src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx","src/renderer/src/components/status-bar/UsageRosterPanel.tsx","src/renderer/src/components/status-bar/status-bar-provider-visibility.ts","src/renderer/src/components/status-bar/tooltip.tsx","src/renderer/src/components/status-bar/usage-account-segments.ts","src/renderer/src/components/status-bar/usage-error-copy.ts","src/renderer/src/components/status-bar/usage-provider-settings-target.ts","src/renderer/src/components/status-bar/usage-roster-row-state.ts","src/renderer/src/components/status-bar/usage-stale-sample.ts","src/renderer/src/components/status-bar/use-status-bar-controller.ts","src/renderer/src/i18n/locales/en.json","src/renderer/src/i18n/locales/es.json","src/renderer/src/i18n/locales/fr.json","src/renderer/src/i18n/locales/ja.json","src/renderer/src/i18n/locales/ko.json","src/renderer/src/i18n/locales/zh.json","src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts","src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts","src/shared/constants.ts","src/shared/persisted-state-types.ts","src/shared/persisted-ui-state-types.ts","src/shared/rpc-contract/client-ui-params.ts","src/shared/status-bar-defaults.ts","src/shared/ui-chrome-types.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=electron"] }]
+argv = ["node","config/scripts/run-meter-gate.mjs"]
+network = "native"
+runtime = "native"
+
+[[gate.tests]]
+id = "config/scripts/assert-github-release-is-draft.test.mjs"
+files = ["config/scripts/assert-github-release-is-draft.test.mjs"]
+touched = ["config/electron-builder.config.cjs", "config/scripts/build-*.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/assert-github-release-is-draft.test.mjs"]
+network = "none"
+runtime = "native"
+
+
+[[gate.tests]]
+id = "config/scripts/verify-release-required-assets.test.mjs"
+files = ["config/scripts/verify-release-required-assets.test.mjs"]
+touched = ["config/electron-builder.config.cjs", "config/scripts/build-*.mjs"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","config/scripts/verify-release-required-assets.test.mjs"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/pty-daemon-spawn-codex-auth.test.ts"
+files = ["src/main/ipc/pty-daemon-spawn-codex-auth.test.ts"]
+touched = ["src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/pty-daemon-spawn-codex-auth.test.ts"]
+network = "none"
+runtime = "native"
+
+[[gate.tests]]
+id = "src/main/ipc/pty-daemon-spawn-session-identity.test.ts"
+files = ["src/main/ipc/pty-daemon-spawn-session-identity.test.ts"]
+touched = ["src/main/ipc/pty/host-env/assembly.ts"]
+setup = [{ argv = ["node", "config/scripts/ensure-native-runtime.mjs", "--runtime=node"] }]
+argv = ["node","node_modules/vitest/vitest.mjs","run","--config","config/vitest.config.ts","--maxWorkers=2","src/main/ipc/pty-daemon-spawn-session-identity.test.ts"]
+network = "none"
+runtime = "native"

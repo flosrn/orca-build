@@ -1,0 +1,1118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: serve only on approved loopback or tailnet
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Tests: Declared unit and integration gates in components/orca/build.toml.
+
+diff --git a/src/cli/handlers/core.ts b/src/cli/handlers/core.ts
+index 6a1b7ab3918aed3b217a0419d088306c36e1e4c5..6cc8e4c65fb1413ff85521678b8f0a25cbbd9b44 100644
+--- a/src/cli/handlers/core.ts
++++ b/src/cli/handlers/core.ts
+@@ -3,7 +3,10 @@ import type { CommandHandler } from '../dispatch'
+ import { formatCliStatus, formatStatus, printResult } from '../format'
+ import { RuntimeClientError, serveOrcaApp } from '../runtime-client'
+ import { stripElectronRunAsNode } from '../runtime/launch'
+-import { getServeOptionValidationError } from '../../shared/serve-option-validation'
++import {
++  getServeBindHostValidationError,
++  getServeOptionValidationError
++} from '../../shared/serve-option-validation'
+ 
+ function envRecord(): Record<string, string> {
+   // Why: the `orca` launcher runs Orca's Electron binary as Node, so this CLI
+@@ -113,10 +116,20 @@ export const CORE_HANDLERS: Record<string, CommandHandler> = {
+     }
+     const port = getOptionalServePort(flags)
+     const pairingAddressValue = flags.get('pairing-address')
++    const bindHostValue = flags.get('bind-host')
++    if (bindHostValue !== undefined) {
++      const bindHostError = getServeBindHostValidationError(
++        typeof bindHostValue === 'string' ? bindHostValue : ''
++      )
++      if (bindHostError) {
++        throw new RuntimeClientError('invalid_argument', bindHostError)
++      }
++    }
+     const exitCode = await serveOrcaApp({
+       json,
+       port,
+       pairingAddress: typeof pairingAddressValue === 'string' ? pairingAddressValue : null,
++      bindHost: typeof bindHostValue === 'string' ? bindHostValue : null,
+       noPairing,
+       mobilePairing,
+       recipeJson,
+diff --git a/src/cli/index-serve-command.test.ts b/src/cli/index-serve-command.test.ts
+index 5b204a4220dee59aa56d637f1d82083140b41731..a817d8410dd3739cbd2d1065367bc1faee10babb 100644
+--- a/src/cli/index-serve-command.test.ts
++++ b/src/cli/index-serve-command.test.ts
+@@ -66,6 +66,7 @@ describe('orca cli worktree awareness', () => {
+       json: true,
+       port: '6768',
+       pairingAddress: '100.64.1.20',
++      bindHost: null,
+       noPairing: true,
+       mobilePairing: false,
+       recipeJson: false,
+@@ -73,6 +74,43 @@ describe('orca cli worktree awareness', () => {
+     })
+   })
+ 
++  it('forwards explicit loopback bind independently of the advertised address', async () => {
++    serveOrcaAppMock.mockResolvedValue(0)
++    await main(
++      ['serve', '--bind-host', '127.0.0.1', '--pairing-address', '100.64.1.20'],
++      '/tmp/repo'
++    )
++    expect(serveOrcaAppMock).toHaveBeenCalledWith(
++      expect.objectContaining({
++        bindHost: '127.0.0.1',
++        pairingAddress: '100.64.1.20'
++      })
++    )
++  })
++
++  it('forwards a Tailscale IPv4 bind', async () => {
++    serveOrcaAppMock.mockResolvedValue(0)
++    await main(['serve', '--bind-host', '100.64.1.20'], '/tmp/repo')
++    expect(serveOrcaAppMock).toHaveBeenCalledWith(
++      expect.objectContaining({ bindHost: '100.64.1.20' })
++    )
++  })
++
++  it.each(['0.0.0.0', '192.168.1.10', '100.64.0.0/10'])(
++    'rejects bind %j before spawning the server',
++    async (host) => {
++      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
++      const priorExitCode = process.exitCode
++      await main(['serve', '--bind-host', host], '/tmp/repo')
++      expect(serveOrcaAppMock).not.toHaveBeenCalled()
++      expect(errSpy.mock.calls.flat().join('\n')).toMatch(
++        /--bind-host only supports 127\.0\.0\.1.*100\.64\.0\.0\/10/
++      )
++      expect(process.exitCode).toBe(1)
++      process.exitCode = priorExitCode
++    }
++  )
++
+   it('starts a foreground headless server with mobile pairing enabled', async () => {
+     serveOrcaAppMock.mockResolvedValue(0)
+ 
+@@ -85,6 +123,7 @@ describe('orca cli worktree awareness', () => {
+       json: true,
+       port: null,
+       pairingAddress: '100.64.1.20',
++      bindHost: null,
+       noPairing: false,
+       mobilePairing: true,
+       recipeJson: false,
+@@ -111,6 +150,7 @@ describe('orca cli worktree awareness', () => {
+       json: false,
+       port: null,
+       pairingAddress: 'wss://sandbox.example.com',
++      bindHost: null,
+       noPairing: false,
+       mobilePairing: false,
+       recipeJson: true,
+diff --git a/src/cli/root-help-text-secondary.ts b/src/cli/root-help-text-secondary.ts
+index 8602e35c49ea549b6d8b6f157be90533cb015b33..3e6b83cd6be74430f811778632eb65504ebbe265 100644
+--- a/src/cli/root-help-text-secondary.ts
++++ b/src/cli/root-help-text-secondary.ts
+@@ -36,7 +36,7 @@ export const ROOT_HELP_TEXT_SECONDARY = [
+   '',
+   'Common Commands:',
+   '  orca open [--json]',
+-  '  orca serve [--port <port>] [--pairing-address <host>] [--mobile-pairing] [--no-pairing] [--project-root <path>] [--recipe-json] [--json]',
++  '  orca serve [--port <port>] [--bind-host <127.0.0.1|tailscale-ipv4>] [--pairing-address <host>] [--mobile-pairing] [--no-pairing] [--project-root <path>] [--recipe-json] [--json]',
+   '  orca status [--json]',
+   '  orca diagnostics memory [--json]',
+   '  orca agent-context [--json]',
+diff --git a/src/cli/runtime/launch.test.ts b/src/cli/runtime/launch.test.ts
+index 7931e489e3da5076926591c1a8418d89ff1822e2..17a993541650a5f217edf9397c3f04369a48a62d 100644
+--- a/src/cli/runtime/launch.test.ts
++++ b/src/cli/runtime/launch.test.ts
+@@ -393,6 +393,21 @@ describe('serveOrcaApp', () => {
+     )
+   })
+ 
++  it('passes an explicit loopback bind to the foreground server child', async () => {
++    const child = new FakeChildProcess()
++    spawnMock.mockReturnValue(child)
++    const launched = serveOrcaApp({ bindHost: '127.0.0.1', pairingAddress: '100.64.1.20' })
++    expect(spawnMock.mock.calls[0]?.[1]).toEqual([
++      '--serve',
++      '--serve-pairing-address',
++      '100.64.1.20',
++      '--serve-bind-host',
++      '127.0.0.1'
++    ])
++    child.emit('exit', 0, null)
++    await expect(launched).resolves.toBe(0)
++  })
++
+   it('passes the app root before serve flags for dev Electron executables', async () => {
+     process.env.ORCA_APP_EXECUTABLE = '/repo/node_modules/.bin/electron'
+     process.env.ORCA_APP_EXECUTABLE_NEEDS_APP_ROOT = '1'
+diff --git a/src/cli/runtime/launch.ts b/src/cli/runtime/launch.ts
+index ebf10c2aaa9bfb19fba38e591494e07e5e915da0..4b63460cd1b86a78c9b2d77a2e725b10515de50e 100644
+--- a/src/cli/runtime/launch.ts
++++ b/src/cli/runtime/launch.ts
+@@ -82,6 +82,7 @@ export function serveOrcaApp(
+     json?: boolean
+     port?: string | null
+     pairingAddress?: string | null
++    bindHost?: string | null
+     noPairing?: boolean
+     mobilePairing?: boolean
+     recipeJson?: boolean
+@@ -100,6 +101,9 @@ export function serveOrcaApp(
+   if (args.pairingAddress) {
+     childArgs.push('--serve-pairing-address', args.pairingAddress)
+   }
++  if (args.bindHost) {
++    childArgs.push('--serve-bind-host', args.bindHost)
++  }
+   if (args.noPairing) {
+     childArgs.push('--serve-no-pairing')
+   }
+diff --git a/src/cli/specs/serve.ts b/src/cli/specs/serve.ts
+index eefbb34a1cb4a102b3ed0bd573fadafe16484b18..21fd448addf85cb47800a959748be1dfb45d88b2 100644
+--- a/src/cli/specs/serve.ts
++++ b/src/cli/specs/serve.ts
+@@ -6,10 +6,11 @@ export const SERVE_COMMAND_SPECS: CommandSpec[] = [
+     path: ['serve'],
+     summary: 'Start an Orca runtime server without opening a desktop window',
+     usage:
+-      'orca serve [--port <port>] [--pairing-address <host>] [--mobile-pairing] [--no-pairing] [--project-root <path>] [--recipe-json] [--json]',
++      'orca serve [--port <port>] [--bind-host <127.0.0.1|tailscale-ipv4>] [--pairing-address <host>] [--mobile-pairing] [--no-pairing] [--project-root <path>] [--recipe-json] [--json]',
+     allowedFlags: [
+       ...GLOBAL_FLAGS,
+       'port',
++      'bind-host',
+       'pairing-address',
+       'mobile-pairing',
+       'no-pairing',
+@@ -18,6 +19,7 @@ export const SERVE_COMMAND_SPECS: CommandSpec[] = [
+     ],
+     notes: [
+       'Runs in the foreground and prints the bound endpoint, advertised endpoint, and pairing status. Stop it with Ctrl+C.',
++      '--bind-host pins the listener to 127.0.0.1 or to the host Tailscale IPv4 (100.64.0.0/10) for its entire lifetime; any other address is refused. Without it, serve binds all interfaces.',
+       '--pairing-address changes only the client-advertised address; use a reachable LAN, Tailscale, SSH-forward, or reverse-proxy endpoint.',
+       'Use --recipe-json with --project-root from VM recipes to print the recipe result JSON and leave the server running.',
+       'Use --mobile-pairing to print a mobile-scoped pairing QR/link instead of the default runtime-environment pairing link.',
+@@ -27,6 +29,8 @@ export const SERVE_COMMAND_SPECS: CommandSpec[] = [
+       'orca serve',
+       'orca serve --json',
+       'orca serve --project-root /workspace/repo --pairing-address wss://sandbox.example.com --recipe-json',
++      'orca serve --bind-host 127.0.0.1 --pairing-address 127.0.0.1',
++      'orca serve --bind-host 100.64.1.20 --pairing-address 100.64.1.20',
+       'orca serve --port 6768 --pairing-address 100.64.1.20',
+       'orca serve --pairing-address 100.64.1.20 --mobile-pairing'
+     ]
+diff --git a/src/main/runtime/rpc/methods/status.ts b/src/main/runtime/rpc/methods/status.ts
+index c8041bbabb4dcc32b3c7db52c32dc867179ca396..4645225814949b546dd4cdc1e2a36c69bafb02bd 100644
+--- a/src/main/runtime/rpc/methods/status.ts
++++ b/src/main/runtime/rpc/methods/status.ts
+@@ -1,5 +1,6 @@
+ import { defineMethod } from '../core'
+ import { getRemoteServerUpdaterSnapshot } from '../../remote-server-updater'
++import { getLongPollCapacityReport } from '../../runtime-rpc/runtime-rpc-long-poll-capacity'
+ 
+ export const STATUS_METHODS = [
+   defineMethod({
+@@ -10,9 +11,20 @@ export const STATUS_METHODS = [
+       // hostname; the wait is capped below the CLI's status probe so a slow lookup never reads as down.
+       await runtime.machineNameReady()
+       const snapshot = getRemoteServerUpdaterSnapshot(runtime.getRuntimeId())
++      // Why: a refused long-poll answers before any handler runs and writes
++      // nothing anywhere else, so this is the only place an operator can see
++      // that the runtime was at capacity. Rule 1 of
++      // docs/reference/remote-wire-compatibility.md: additive and optional, so
++      // an older peer ignores it. Absence carries meaning and must read as
++      // UNKNOWN, never as "nothing was refused" — a host predating the field
++      // omits it, and so does one whose RPC server never started. Hence
++      // omitted, not `?? null`: collapsing the two would make a mixed-version
++      // host indistinguishable from a runtime with an empty ledger.
++      const longPollCapacity = getLongPollCapacityReport(runtime.getRuntimeId())
+       return {
+         ...runtime.getStatus(),
+         ...(pairedDeviceId ? { pairedDeviceId } : {}),
++        ...(longPollCapacity ? { longPollCapacity } : {}),
+         appVersion: snapshot.appVersion,
+         remoteUpdateSupport: snapshot.support
+       }
+diff --git a/src/main/runtime/rpc/unix-socket-transport.ts b/src/main/runtime/rpc/unix-socket-transport.ts
+index 092d67a0dc993bd70e14e5c2ab0ab76e5798a157..c3cc4ffae9d7da241f52fb292007920da6a56e52 100644
+--- a/src/main/runtime/rpc/unix-socket-transport.ts
++++ b/src/main/runtime/rpc/unix-socket-transport.ts
+@@ -1,6 +1,6 @@
+ // Why: this is the original Unix socket / named pipe transport extracted from
+ // runtime-rpc.ts. It preserves the exact same behavior: newline-delimited JSON,
+-// 30s idle timeout, 1MB max message, 32 max connections, chmod 0o600 on Unix.
++// 30s idle timeout, 1MB max message, chmod 0o600 on Unix.
+ // It also owns the keepalive timer and per-connection abort signal so the
+ // server-side handler can cancel long-poll dispatches when the client goes
+ // away. See design doc §3.1.
+@@ -10,7 +10,13 @@ import type { RpcMessageContext, RpcTransport } from './transport'
+ 
+ const MAX_RUNTIME_RPC_MESSAGE_BYTES = 1024 * 1024
+ const RUNTIME_RPC_SOCKET_IDLE_TIMEOUT_MS = 30_000
+-const MAX_RUNTIME_RPC_CONNECTIONS = 32
++// Why exported: LONG_POLL_CAP is half of this budget, so the two must move
++// together. Measured 2026-09-02 on a ten-worker orchestration wave: with the
++// budget at 32 the derived 16-slot long-poll cap sat saturated for 67 min
++// (every worker parks one `check --wait`), and every request that arrived in
++// that window was refused. 64 keeps the same half-and-half split with 32 slots
++// still reserved for short RPCs.
++export const MAX_RUNTIME_RPC_CONNECTIONS = 64
+ const DEFAULT_KEEPALIVE_INTERVAL_MS = 10_000
+ 
+ export type UnixSocketTransportOptions = {
+diff --git a/src/main/runtime/runtime-rpc-browser-host-admission.test.ts b/src/main/runtime/runtime-rpc-browser-host-admission.test.ts
+index 8b7446e6f406b30bd13bc72d1e2374ba9c892546..12e32337a1551a7652ea2ec4154821075608cd13 100644
+--- a/src/main/runtime/runtime-rpc-browser-host-admission.test.ts
++++ b/src/main/runtime/runtime-rpc-browser-host-admission.test.ts
+@@ -77,7 +77,8 @@ describe('runtime RPC browser-host admission', () => {
+           id: 'host-overflow',
+           ok: false,
+           error: expect.objectContaining({
+-            message: 'browser-host capacity reached; retry with backoff'
++            message:
++              'browser-host capacity reached (held 1/4: 0 wait, 0 ask, 1 browser-host); retry with backoff'
+           })
+         })
+       )
+@@ -154,7 +155,8 @@ describe('runtime RPC browser-host admission', () => {
+           id: 'host-a-overflow',
+           ok: false,
+           error: expect.objectContaining({
+-            message: 'browser-host capacity reached; retry with backoff'
++            message:
++              'browser-host capacity reached (held 4/16: 0 wait, 0 ask, 4 browser-host); retry with backoff'
+           })
+         })
+       )
+@@ -239,7 +241,8 @@ describe('runtime RPC browser-host admission', () => {
+             id: 'host-b',
+             ok: false,
+             error: expect.objectContaining({
+-              message: 'browser-host capacity reached; retry with backoff'
++              message:
++                'browser-host capacity reached (held 3/4: 0 wait, 2 ask, 1 browser-host); retry with backoff'
+             })
+           })
+         )
+diff --git a/src/main/runtime/runtime-rpc-long-poll-capacity.test.ts b/src/main/runtime/runtime-rpc-long-poll-capacity.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..59bdc339760ccd1442a9f5f1d8e2ec1301fe2bcc
+--- /dev/null
++++ b/src/main/runtime/runtime-rpc-long-poll-capacity.test.ts
+@@ -0,0 +1,139 @@
++import { mkdtempSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { describe, expect, it, vi } from 'vitest'
++import { OrcaRuntimeService } from './orca-runtime'
++import { OrchestrationDb } from './orchestration/db'
++import { readRuntimeMetadata } from './runtime-metadata'
++import { OrcaRuntimeRpcServer } from './runtime-rpc'
++import { getLongPollCapacityReport } from './runtime-rpc/runtime-rpc-long-poll-capacity'
++import {
++  openFramedSession,
++  sendRequest,
++  waitFor,
++  type FramedSession
++} from './runtime-rpc-test-harness'
++
++describe('runtime long-poll capacity evidence', () => {
++  it('serves status while twenty worker and coordinator inboxes are waiting', async () => {
++    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-wave-'))
++    const runtime = new OrcaRuntimeService()
++    const db = new OrchestrationDb(':memory:')
++    runtime.setOrchestrationDb(db)
++    vi.spyOn(runtime, 'getTerminalPaneKey').mockImplementation((handle) => `tab_${handle}:leaf`)
++    const server = new OrcaRuntimeRpcServer({ runtime, userDataPath, enableWebSocket: false })
++    const parked: FramedSession[] = []
++    await server.start()
++    try {
++      const metadata = readRuntimeMetadata(userDataPath)!
++      const endpoint = metadata.transports[0]!.endpoint
++      // The old sixteen-slot cap refused this worker/coordinator wave.
++      for (let index = 0; index < 20; index++) {
++        parked.push(
++          openFramedSession(endpoint, {
++            id: `wave_${index}`,
++            authToken: metadata.authToken,
++            method: 'orchestration.check',
++            params: { terminal: `term_wave_${index}`, wait: true, timeoutMs: 10_000 }
++          })
++        )
++      }
++      await waitFor(() => server['activeLongPolls'] === 20)
++      const status = await sendRequest(endpoint, {
++        id: 'wave_status',
++        authToken: metadata.authToken,
++        method: 'status.get'
++      })
++      expect(status).toMatchObject({
++        ok: true,
++        result: {
++          longPollCapacity: {
++            held: 20,
++            refusedByClass: { ask: 0, 'browser-host': 0, wait: 0 }
++          }
++        }
++      })
++    } finally {
++      for (const session of parked) {
++        session.socket.destroy()
++      }
++      await Promise.all(parked.map((session) => session.done))
++      await server.stop()
++      db.close()
++    }
++  })
++
++  it('records a refused long-poll in the message and in status.get', async () => {
++    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
++    const runtime = new OrcaRuntimeService()
++    const db = new OrchestrationDb(':memory:')
++    runtime.setOrchestrationDb(db)
++    vi.spyOn(runtime, 'getTerminalPaneKey').mockImplementation((handle) => `tab_${handle}:leaf`)
++    const server = new OrcaRuntimeRpcServer({
++      runtime,
++      userDataPath,
++      keepaliveIntervalMs: 1000,
++      longPollCap: 1
++    })
++    await server.start()
++
++    try {
++      const metadata = readRuntimeMetadata(userDataPath)
++      const endpoint = metadata!.transports[0]!.endpoint
++
++      const parked = openFramedSession(endpoint, {
++        id: 'req_parked',
++        authToken: metadata!.authToken,
++        method: 'orchestration.check',
++        params: { terminal: 'term_a', wait: true, timeoutMs: 5_000 }
++      })
++      await waitFor(() => server['activeLongPolls'] === 1)
++
++      const refused = await sendRequest(endpoint, {
++        id: 'req_refused',
++        authToken: metadata!.authToken,
++        method: 'orchestration.check',
++        params: { terminal: 'term_b', wait: true, timeoutMs: 5_000 }
++      })
++      // Why: the refused client is the only witness — the fence answers before
++      // any handler runs, so no receipt, dispatch row or stage records it.
++      expect(refused).toMatchObject({
++        id: 'req_refused',
++        ok: false,
++        error: {
++          code: 'runtime_busy',
++          message:
++            'long-poll capacity reached (held 1/1: 1 wait, 0 ask, 0 browser-host); retry with backoff'
++        }
++      })
++
++      const status = await sendRequest(endpoint, {
++        id: 'req_status',
++        authToken: metadata!.authToken,
++        method: 'status.get'
++      })
++      // Why: asserted on the whole result — the report is the durable half of
++      // the evidence, readable long after the refused client is gone.
++      expect(status.result).toMatchObject({
++        longPollCapacity: {
++          cap: 1,
++          held: 1,
++          heldByClass: { ask: 0, 'browser-host': 0, wait: 1 },
++          peakHeld: 1,
++          peakHeldAt: expect.any(String),
++          refusedByClass: { ask: 0, 'browser-host': 0, wait: 1 },
++          lastRefusalAt: expect.any(String)
++        }
++      })
++
++      parked.socket.destroy()
++      await parked.done
++    } finally {
++      db.close()
++      await server.stop()
++    }
++
++    // Why: a stopped runtime holds nothing, so status must stop answering for it.
++    expect(getLongPollCapacityReport(runtime.getRuntimeId())).toBeNull()
++  })
++})
+diff --git a/src/main/runtime/runtime-rpc-websocket-bind-host.test.ts b/src/main/runtime/runtime-rpc-websocket-bind-host.test.ts
+index 8210b0f06d404ec2ab347dfc9b5e575e09e60091..f7e50c8dcde0253a81b4d2c055e48ed7beb59dd8 100644
+--- a/src/main/runtime/runtime-rpc-websocket-bind-host.test.ts
++++ b/src/main/runtime/runtime-rpc-websocket-bind-host.test.ts
+@@ -518,8 +518,11 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
+     }
+   })
+ 
+-  it('honours a pinned bind host over exposeNetworkByDefault (orcad --bind)', async () => {
++  it('pins serve loopback despite its wide default and a previously connected client', async () => {
+     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
++    const registry = new DeviceRegistry(userDataPath)
++    const device = registry.getOrCreatePendingDevice('CLI', 'runtime', 'network')
++    registry.updateLastSeen(device.deviceId)
+     const server = new OrcaRuntimeRpcServer({
+       runtime: new OrcaRuntimeService(),
+       userDataPath,
+@@ -534,6 +537,12 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
+     await server.start()
+     try {
+       expect(wsTransportOf(server)?.resolvedHost).toBe('127.0.0.1')
++      expect(
++        server
++          .getDeviceRegistry()
++          ?.listDevices()
++          .some((d) => d.lastSeenAt > 0)
++      ).toBe(true)
+       expect(new URL(server.getWebSocketEndpoint()!).hostname).toBe('127.0.0.1')
+     } finally {
+       await server.stop()
+@@ -601,6 +610,20 @@ describe('OrcaRuntimeRpcServer WebSocket bind host (STA-2370)', () => {
+     }
+   })
+ 
++  it('refuses to widen a bind pinned to a Tailscale address', async () => {
++    const server = new OrcaRuntimeRpcServer({
++      runtime: new OrcaRuntimeService(),
++      userDataPath: mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-')),
++      enableWebSocket: true,
++      wsPort: 0,
++      exposeNetworkByDefault: true,
++      pinnedBindHost: '100.64.1.20'
++    })
++    await expect(server.ensureNetworkExposure()).rejects.toThrow(
++      /pinned to 100\.64\.1\.20; refusing to widen/
++    )
++  })
++
+   it('still widens on request when the operator pinned the wide address', async () => {
+     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+     const server = new OrcaRuntimeRpcServer({
+diff --git a/src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts b/src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts
+index ea8837c01c9091778ed373ddd45ee575b1a99f03..c34f7ea15b21608e2207ecc8f5dea084da1a1ebc 100644
+--- a/src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts
++++ b/src/main/runtime/runtime-rpc-websocket-long-poll-caps.test.ts
+@@ -174,7 +174,8 @@ describe('OrcaRuntimeRpcServer', () => {
+           ok: false,
+           error: expect.objectContaining({
+             code: 'runtime_busy',
+-            message: 'orchestration.ask capacity reached; retry with backoff'
++            message:
++              'orchestration.ask capacity reached (held 2/4: 0 wait, 2 ask, 0 browser-host); retry with backoff'
+           })
+         })
+       )
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts b/src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts
+index 9cfe31251b6ecc7012fca24be808715d082efe3d..0e2834ef8d39c63fbe423e914557a431ae671389 100644
+--- a/src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-lifecycle.ts
+@@ -18,6 +18,7 @@ import {
+   createRuntimeTransportMetadata,
+   sweepOrphanedRuntimeSockets
+ } from './runtime-rpc-socket-metadata'
++import { publishLongPollCapacityProbe } from './runtime-rpc-long-poll-capacity'
+ 
+ export class RuntimeRpcLifecycle extends RuntimeRpcWebSocketDispatch {
+   async start(): Promise<void> {
+@@ -108,7 +109,6 @@ export class RuntimeRpcLifecycle extends RuntimeRpcWebSocketDispatch {
+     // Why: set in-memory transport state before writing metadata so the bootstrap file has the real endpoint/token pair.
+     this.activeTransports = activeTransports
+     this.transports = transportsMeta
+-
+     try {
+       this.writeMetadata()
+     } catch (error) {
+@@ -119,6 +119,11 @@ export class RuntimeRpcLifecycle extends RuntimeRpcWebSocketDispatch {
+       throw error
+     }
+ 
++    // Why: published once the runtime is discoverable, not in the constructor —
++    // a server that never started holds no slots, and a start that failed its
++    // metadata write must not leave status.get answering for a dead runtime.
++    publishLongPollCapacityProbe(this.runtime.getRuntimeId(), () => this.longPollCapacityReport())
++
+     this.metadataOwnershipWatch = watchRuntimeMetadataOwnership({
+       userDataPath: this.userDataPath,
+       ownedPid: this.pid,
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts b/src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..39b8254e9d972d948f79eafb0d5d6d24a6a69b11
+--- /dev/null
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-long-poll-capacity.ts
+@@ -0,0 +1,65 @@
++import type { RuntimeLongPollClass } from './runtime-rpc-long-poll'
++
++export type LongPollCapacityReport = {
++  cap: number
++  held: number
++  heldByClass: Record<RuntimeLongPollClass, number>
++  peakHeld: number
++  peakHeldAt: string | null
++  refusedByClass: Record<RuntimeLongPollClass, number>
++  lastRefusalAt: string | null
++}
++
++type LongPollCapacityProbe = () => LongPollCapacityReport
++
++// Why: a refused long-poll is answered before any handler runs, so it writes no
++// mutation receipt, no dispatch row and no stage — the runtime's own store
++// cannot tell "refused at the fence" from "never called". Measured on the
++// 2026-09-02 orchestration wave: 67 min at 16/16 with no trace anywhere, and
++// the resulting 23-min dispatch gap was attributed to a launch queue that does
++// not exist. This probe is that missing trace; status.get publishes it.
++// Keyed by runtime id, not a bare singleton: tests run several servers per
++// process and must not read each other's counters.
++const probesByRuntimeId = new Map<string, LongPollCapacityProbe>()
++
++export function publishLongPollCapacityProbe(
++  runtimeId: string,
++  probe: LongPollCapacityProbe
++): void {
++  probesByRuntimeId.set(runtimeId, probe)
++}
++
++export function retireLongPollCapacityProbe(runtimeId: string): void {
++  probesByRuntimeId.delete(runtimeId)
++}
++
++export function getLongPollCapacityReport(runtimeId: string): LongPollCapacityReport | null {
++  return probesByRuntimeId.get(runtimeId)?.() ?? null
++}
++
++// Why: "capacity reached" alone cannot tell a legitimate worker fleet parking
++// `check --wait` from leaked slots held by reaped processes — the refused
++// client, which is usually the only witness, needs the occupancy that refused
++// it.
++//
++// This is published content on an existing path, so rule 3 of
++// docs/reference/remote-wire-compatibility.md applies: it grants nothing, it
++// asks whether an old client can still interpret the new content. Every reader
++// of a `runtime_busy` failure was checked, and none of them parses this prose.
++// isBrowserHostAdmissionCapacityError reads `.code` only.
++// isRecoverableRemoteRuntimeConnectionError and isRuntimeRpcQueueOverloadError
++// treat a present code as authoritative and consult their message fragments
++// only for an error carrying no code — and neither list holds this text.
++// Mobile's classifyWorktreeShowResponse does parse prose, but only for
++// `runtime_error`; any other code, this one included, returns 'unknown' before
++// the message is read, and the token it hunts is `selector_not_found`.
++// So the prefix and the "retry with backoff" tail stay for the human or agent
++// reading them, and a future reader that keys on this text has to negotiate it
++// rather than assume it.
++export function describeLongPollRefusal(reason: string, report: LongPollCapacityReport): string {
++  const held = report.heldByClass
++  return (
++    `${reason} (held ${report.held}/${report.cap}: ` +
++    `${held.wait} wait, ${held.ask} ask, ${held['browser-host']} browser-host); retry with backoff`
++  )
++}
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts b/src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts
+index 02d8422547eaac4c978f0f0f73cbb789b9ffaeab..f375e895e3437bdf36ea21e19c054682bb438443 100644
+--- a/src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-long-poll.ts
+@@ -1,9 +1,13 @@
+ import type { RpcRequest } from '../rpc/core'
++import { MAX_RUNTIME_RPC_CONNECTIONS } from '../rpc/unix-socket-transport'
+ 
+ export const KEEPALIVE_INTERVAL_MS = 10_000
+ 
+-// Why: cap long-polls at half the 32-slot connection budget so they can't starve short RPCs; overflow → runtime_busy. See §7 risk #2.
+-export const LONG_POLL_CAP = 16
++// Why: cap long-polls at half the connection budget so they can't starve short
++// RPCs; overflow → runtime_busy. Derived, not literal: a hardcoded 16 stayed
++// behind when the budget doubled, and a wave of workers that each park one
++// `check --wait` fills the cap long before the sockets run out. See §7 risk #2.
++export const LONG_POLL_CAP = MAX_RUNTIME_RPC_CONNECTIONS / 2
+ 
+ // Why: orchestration.ask blocks on a human/agent reply for minutes, an order of
+ // magnitude longer than terminal.wait or check --wait, so a fleet of asking
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts b/src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts
+index b79b87a5be53cbb58dcfb9a84f50a547c270845b..8ed3ff6da090faaacdcc6fa1fea893056ba4ca28 100644
+--- a/src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-request-admission.ts
+@@ -5,6 +5,12 @@ import type { RpcRequest, RpcResponse } from '../rpc/core'
+ import { errorResponse } from '../rpc/errors'
+ import { RuntimeRpcBinaryRouting } from './runtime-rpc-binary-routing'
+ import { classifyRuntimeLongPoll, type RuntimeLongPollClass } from './runtime-rpc-long-poll'
++import {
++  describeLongPollRefusal,
++  type LongPollCapacityReport
++} from './runtime-rpc-long-poll-capacity'
++
++const LONG_POLL_REFUSAL_WARN_INTERVAL_MS = 60_000
+ 
+ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
+   // Why: Unix socket dispatch is one-shot and auths via the shared token from the 0o600 metadata file. See §3.1.
+@@ -54,18 +60,19 @@ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
+       return null
+     }
+     if (this.activeLongPolls >= this.longPollCap) {
+-      return 'long-poll capacity reached; retry with backoff'
++      return this.refuseLongPoll(longPoll, 'long-poll capacity reached')
+     }
+     if (
+       (longPoll === 'ask' || longPoll === 'browser-host') &&
+       this.activeAskLongPolls + this.activeBrowserHostLongPolls >= this.specializedLongPollCap
+     ) {
+-      return longPoll === 'ask'
+-        ? 'orchestration.ask capacity reached; retry with backoff'
+-        : 'browser-host capacity reached; retry with backoff'
++      return this.refuseLongPoll(
++        longPoll,
++        longPoll === 'ask' ? 'orchestration.ask capacity reached' : 'browser-host capacity reached'
++      )
+     }
+     if (longPoll === 'ask' && this.activeAskLongPolls >= this.askLongPollCap) {
+-      return 'orchestration.ask capacity reached; retry with backoff'
++      return this.refuseLongPoll(longPoll, 'orchestration.ask capacity reached')
+     }
+     if (
+       longPoll === 'browser-host' &&
+@@ -74,9 +81,13 @@ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
+           (this.activeBrowserHostLongPollsByDevice.get(pairedDeviceId) ?? 0) >=
+             this.browserHostLongPollCapPerDevice))
+     ) {
+-      return 'browser-host capacity reached; retry with backoff'
++      return this.refuseLongPoll(longPoll, 'browser-host capacity reached')
+     }
+     this.activeLongPolls += 1
++    if (this.activeLongPolls > this.peakLongPolls) {
++      this.peakLongPolls = this.activeLongPolls
++      this.peakLongPollsAt = new Date().toISOString()
++    }
+     if (longPoll === 'ask') {
+       this.activeAskLongPolls += 1
+     } else if (longPoll === 'browser-host') {
+@@ -91,6 +102,46 @@ export class RuntimeRpcRequestAdmission extends RuntimeRpcBinaryRouting {
+     return null
+   }
+ 
++  // Why: the refusal is answered before any handler runs, so this counter and
++  // the warn are the whole audit trail — nothing downstream will record that
++  // the request existed. The message carries the occupancy that refused it.
++  private refuseLongPoll(longPoll: RuntimeLongPollClass, reason: string): string {
++    const now = new Date()
++    this.longPollRefusals[longPoll] += 1
++    this.lastLongPollRefusalAt = now.toISOString()
++    const report = this.longPollCapacityReport()
++    const nowMs = now.getTime()
++    if (nowMs - this.lastLongPollRefusalWarnMs[longPoll] >= LONG_POLL_REFUSAL_WARN_INTERVAL_MS) {
++      this.lastLongPollRefusalWarnMs[longPoll] = nowMs
++      console.warn(
++        `[runtime] Refused a ${longPoll} long-poll: ${reason}. Held ${report.held}/${report.cap} ` +
++          `(${report.heldByClass.wait} wait, ${report.heldByClass.ask} ask, ` +
++          `${report.heldByClass['browser-host']} browser-host); ` +
++          `${this.longPollRefusals[longPoll]} ${longPoll} refusal(s) since start.`
++      )
++    }
++    return describeLongPollRefusal(reason, report)
++  }
++
++  protected longPollCapacityReport(): LongPollCapacityReport {
++    return {
++      cap: this.longPollCap,
++      held: this.activeLongPolls,
++      heldByClass: {
++        ask: this.activeAskLongPolls,
++        'browser-host': this.activeBrowserHostLongPolls,
++        wait: Math.max(
++          0,
++          this.activeLongPolls - this.activeAskLongPolls - this.activeBrowserHostLongPolls
++        )
++      },
++      peakHeld: this.peakLongPolls,
++      peakHeldAt: this.peakLongPollsAt,
++      refusedByClass: { ...this.longPollRefusals },
++      lastRefusalAt: this.lastLongPollRefusalAt
++    }
++  }
++
+   protected releaseLongPoll(longPoll: RuntimeLongPollClass | null, pairedDeviceId?: string): void {
+     if (!longPoll) {
+       return
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts b/src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts
+index f79834fbcc23dd5bdb6882aeb1fcd60c818df104..f91236121ba6f7fecb1fe45f5718ace644204cbc 100644
+--- a/src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-shutdown.ts
+@@ -1,4 +1,5 @@
+ import { RuntimeRpcMobilePairing } from './runtime-rpc-mobile-pairing'
++import { retireLongPollCapacityProbe } from './runtime-rpc-long-poll-capacity'
+ 
+ export class RuntimeRpcShutdown extends RuntimeRpcMobilePairing {
+   /** Why: test-only seam — runs one ownership check instead of waiting out the poll interval. */
+@@ -20,6 +21,7 @@ export class RuntimeRpcShutdown extends RuntimeRpcMobilePairing {
+     const transports = this.activeTransports
+     this.activeTransports = []
+     this.transports = []
++    retireLongPollCapacityProbe(this.runtime.getRuntimeId())
+     this.metadataOwnershipWatch?.stop()
+     this.metadataOwnershipWatch = null
+     this.mobileSocketWiring = null
+diff --git a/src/main/runtime/runtime-rpc/runtime-rpc-state.ts b/src/main/runtime/runtime-rpc/runtime-rpc-state.ts
+index e7f56ceed13cc0d3f71d7487e455d434e6b34934..3b7794928d2ac3514ea221b1dc204ba4fd74d33d 100644
+--- a/src/main/runtime/runtime-rpc/runtime-rpc-state.ts
++++ b/src/main/runtime/runtime-rpc/runtime-rpc-state.ts
+@@ -19,7 +19,8 @@ import {
+   BROWSER_HOST_LONG_POLL_SHARE,
+   KEEPALIVE_INTERVAL_MS,
+   LONG_POLL_CAP,
+-  SPECIALIZED_LONG_POLL_SHARE
++  SPECIALIZED_LONG_POLL_SHARE,
++  type RuntimeLongPollClass
+ } from './runtime-rpc-long-poll'
+ import type {
+   MobilePairingOffer,
+@@ -91,6 +92,24 @@ export class RuntimeRpcState {
+   protected activeAskLongPolls = 0
+   protected activeBrowserHostLongPolls = 0
+   protected readonly activeBrowserHostLongPollsByDevice = new Map<string, number>()
++  // Why: the only durable evidence a refusal ever happened — see
++  // runtime-rpc-long-poll-capacity. Peak is recorded on the way up so a wave
++  // that saturated and drained before anyone looked still says so.
++  protected peakLongPolls = 0
++  protected peakLongPollsAt: string | null = null
++  protected readonly longPollRefusals: Record<RuntimeLongPollClass, number> = {
++    ask: 0,
++    'browser-host': 0,
++    wait: 0
++  }
++  protected lastLongPollRefusalAt: string | null = null
++  // Why: one warn per class per minute — a saturated runtime refuses on every
++  // poll retry, and an unthrottled line would bury the log it is meant to serve.
++  protected lastLongPollRefusalWarnMs: Record<RuntimeLongPollClass, number> = {
++    ask: 0,
++    'browser-host': 0,
++    wait: 0
++  }
+ 
+   constructor({
+     runtime,
+diff --git a/src/main/startup/main-process-ready-foundation.ts b/src/main/startup/main-process-ready-foundation.ts
+index 238998bac49a6abe53f732a35f6482d6fde693ae..29820b0eee6af32488a9f4002af09006104103b0 100644
+--- a/src/main/startup/main-process-ready-foundation.ts
++++ b/src/main/startup/main-process-ready-foundation.ts
+@@ -25,6 +25,7 @@ import {
+ import { wslHookRelayManager } from '../agent-hooks/wsl-hook-relay-manager'
+ import {
+   attachClaudeLivePtyPersistence,
++  claudeLivePtyBindingForPersistedEntry,
+   onLiveClaudePtysDrained,
+   seedLiveClaudePtysFromPersistence
+ } from '../claude-accounts/live-pty-gate'
+@@ -267,7 +268,20 @@ export async function initializeReadyFoundation(): Promise<void> {
+     void state.rateLimits?.refreshAfterClaudeLivePtysDrained()
+   })
+   const persistedClaudePtyIds = store.getClaudeLivePtySessionIds()
+-  seedLiveClaudePtysFromPersistence(persistedClaudePtyIds)
++  // Why: restoring the account each surviving session was launched under keeps
++  // the refresh gate per-account across a restart. A session with no recorded
++  // binding stays unattributed, which protects the shared ~/.claude without
++  // freezing every account's refresh.
++  seedLiveClaudePtysFromPersistence(
++    persistedClaudePtyIds,
++    Object.fromEntries(
++      store
++        .getClaudeLivePtyBindings()
++        .map(
++          (binding) => [binding.sessionId, claudeLivePtyBindingForPersistedEntry(binding)] as const
++        )
++    )
++  )
+   if (persistedClaudePtyIds.length > 0) {
+     console.log(
+       `[claude-live-pty] Seeded ${persistedClaudePtyIds.length} persisted Claude session id(s) into the refresh gate`
+diff --git a/src/main/startup/main-process-runtime-launch.ts b/src/main/startup/main-process-runtime-launch.ts
+index 858c6b757867133b4f10e0f3445af3771a2ce1bf..3be14cd10244b549ee74347d212f8eb7575f1c95 100644
+--- a/src/main/startup/main-process-runtime-launch.ts
++++ b/src/main/startup/main-process-runtime-launch.ts
+@@ -82,6 +82,7 @@ function installRuntimeRpc(
+     // Why: STA-2370 — the desktop app binds the WS listener to loopback until the user pairs a device;
+     // `orca serve` is an explicit remote opt-in, and E2E keeps the wide bind its harness connects over.
+     exposeNetworkByDefault: Boolean(serveOptions) || isE2E,
++    ...(serveOptions?.bindHost ? { pinnedBindHost: serveOptions.bindHost } : {}),
+     ...(isE2E ? { wsPort: e2eWsPort } : {}),
+     ...(devWsPort !== undefined ? { wsPort: devWsPort } : {}),
+     ...(serveOptions?.wsPort !== undefined
+diff --git a/src/main/startup/serve-mode-argv.test.ts b/src/main/startup/serve-mode-argv.test.ts
+index 53b0bb616a160fb86cf4fb2dbb7fee866c004488..fae66295e8547f6d9fafcc3c5b123b161a57d982 100644
+--- a/src/main/startup/serve-mode-argv.test.ts
++++ b/src/main/startup/serve-mode-argv.test.ts
+@@ -120,6 +120,16 @@ describe('serve-mode-argv', () => {
+     ])
+   })
+ 
++  it('normalizes loopback bind without treating its address as the serve subcommand', () => {
++    expect(normalizeServeModeArgv(['/AppRun', 'serve', '--bind-host=127.0.0.1'])).toEqual([
++      '/AppRun',
++      '--serve',
++      '--serve-bind-host',
++      '127.0.0.1'
++    ])
++    expect(findServeSubcommandIndex(['/AppRun', '--bind-host', 'serve'])).toBe(-1)
++  })
++
+   it('keeps Electron-injected Chromium switches while normalizing direct serve', () => {
+     expect(
+       normalizeServeModeArgv([
+@@ -149,6 +159,8 @@ describe('serve-mode-argv', () => {
+       '6768',
+       '--serve-pairing-address',
+       '100.64.1.20',
++      '--serve-bind-host',
++      '127.0.0.1',
+       '--serve-no-pairing',
+       '--serve-mobile-pairing',
+       '--serve-recipe-json',
+diff --git a/src/main/startup/serve-mode-argv.ts b/src/main/startup/serve-mode-argv.ts
+index 8441f116805a71cfdaad128acd9de8b956f9101e..3bf3d14bf50a1079157b609c991b74472fbc2391 100644
+--- a/src/main/startup/serve-mode-argv.ts
++++ b/src/main/startup/serve-mode-argv.ts
+@@ -18,6 +18,7 @@ const CLI_TO_SERVE_FLAG = new Map([
+ const CLI_TO_SERVE_VALUE_FLAG = new Map([
+   ['--port', '--serve-port'],
+   ['--pairing-address', '--serve-pairing-address'],
++  ['--bind-host', '--serve-bind-host'],
+   ['--project-root', '--serve-project-root']
+ ])
+ 
+@@ -30,6 +31,7 @@ export const VALUE_TAKING_FLAGS = new Set([
+   ...CLI_TO_SERVE_VALUE_FLAG.keys(),
+   '--serve-port',
+   '--serve-pairing-address',
++  '--serve-bind-host',
+   '--serve-project-root',
+   '--disable-features',
+   '--user-data-dir',
+diff --git a/src/main/startup/serve-options.test.ts b/src/main/startup/serve-options.test.ts
+index 9e2bb06919dd2e2337a8877b15dd673d1c260d5f..6127246e2451d7da78eccb0b8e68441673ae9353 100644
+--- a/src/main/startup/serve-options.test.ts
++++ b/src/main/startup/serve-options.test.ts
+@@ -10,6 +10,7 @@ describe('getServeOptions', () => {
+       json: false,
+       wsPort: 6768,
+       pairingAddress: null,
++      bindHost: null,
+       noPairing: true,
+       mobilePairing: false,
+       recipeJson: false,
+@@ -17,6 +18,48 @@ describe('getServeOptions', () => {
+     })
+   })
+ 
++  it('pins an explicit loopback bind without changing the advertised address', () => {
++    const argv = normalizeServeModeArgv([
++      '/AppRun',
++      'serve',
++      '--bind-host',
++      '127.0.0.1',
++      '--pairing-address',
++      '100.64.1.20'
++    ])
++    expect(getServeOptions(argv)).toMatchObject({
++      bindHost: '127.0.0.1',
++      pairingAddress: '100.64.1.20'
++    })
++    expect(
++      getServeOptions(['/AppRun', '--serve', '--serve-pairing-address=127.0.0.1'])
++    ).toMatchObject({ pairingAddress: '127.0.0.1', bindHost: null })
++  })
++
++  it('pins a Tailscale IPv4 bind', () => {
++    expect(
++      getServeOptions(normalizeServeModeArgv(['/AppRun', 'serve', '--bind-host', '100.64.1.20']))
++    ).toMatchObject({ bindHost: '100.64.1.20' })
++  })
++
++  it.each(['0.0.0.0', '192.0.2.1', 'example.com', '127.0.0.2', '100.128.0.1', '100.64.0.0/10'])(
++    'rejects a non-approved bind address %j',
++    (address) => {
++      expect(() => getServeOptions(['/AppRun', '--serve', `--serve-bind-host=${address}`])).toThrow(
++        /--bind-host only supports 127\.0\.0\.1.*100\.64\.0\.0\/10/
++      )
++    }
++  )
++
++  it('rejects a missing or empty bind-host value', () => {
++    expect(() => getServeOptions(['/AppRun', '--serve', '--serve-bind-host'])).toThrow(
++      /Missing value for --serve-bind-host/
++    )
++    expect(() => getServeOptions(['/AppRun', '--serve', '--serve-bind-host='])).toThrow(
++      /Missing value for --serve-bind-host/
++    )
++  })
++
+   it('accepts equals-form values in the normalized shape', () => {
+     expect(
+       getServeOptions([
+@@ -140,6 +183,7 @@ describe('getServeOptions', () => {
+     ).toEqual({
+       json: false,
+       pairingAddress: null,
++      bindHost: null,
+       noPairing: false,
+       mobilePairing: false,
+       recipeJson: false,
+diff --git a/src/main/startup/serve-options.ts b/src/main/startup/serve-options.ts
+index c03981237971c63beda23cb3d35e238858153011..d72adcf8808605304b0510af15a05e24e74f07d5 100644
+--- a/src/main/startup/serve-options.ts
++++ b/src/main/startup/serve-options.ts
+@@ -1,4 +1,5 @@
+ import {
++  getServeBindHostValidationError,
+   getServeFlagTypoError,
+   getServeOptionValidationError
+ } from '../../shared/serve-option-validation'
+@@ -7,6 +8,7 @@ export type ServeOptions = {
+   json: boolean
+   wsPort?: number
+   pairingAddress: string | null
++  bindHost: string | null
+   noPairing: boolean
+   mobilePairing: boolean
+   recipeJson: boolean
+@@ -106,10 +108,22 @@ export function getServeOptions(argv: readonly string[]): ServeOptions {
+     wsPort = parsedPort
+   }
+ 
++  const bindHost = valueAfter(
++    optionsArgv,
++    ['--serve-bind-host', '--bind-host'],
++    true,
++    '--serve-bind-host'
++  )
++  const bindHostError = bindHost === null ? null : getServeBindHostValidationError(bindHost)
++  if (bindHostError) {
++    throw new Error(bindHostError)
++  }
++
+   const options: ServeOptions = {
+     // The CLI uses `flags.has('json')`, so even `--json=false` enables JSON output.
+     json: hasFlag(optionsArgv, ['--serve-json', '--json']),
+     ...(wsPort !== undefined ? { wsPort } : {}),
++    bindHost,
+     pairingAddress: valueAfter(
+       optionsArgv,
+       ['--serve-pairing-address', '--pairing-address'],
+diff --git a/src/shared/serve-option-validation.test.ts b/src/shared/serve-option-validation.test.ts
+index 70473c574776acb1482b09b9039a237e5a693473..c783619a293a08b429d6c0061184c47ba9f0b08e 100644
+--- a/src/shared/serve-option-validation.test.ts
++++ b/src/shared/serve-option-validation.test.ts
+@@ -1,5 +1,9 @@
+ import { describe, expect, it } from 'vitest'
+-import { getServeFlagTypoError, getServeOptionValidationError } from './serve-option-validation'
++import {
++  getServeBindHostValidationError,
++  getServeFlagTypoError,
++  getServeOptionValidationError
++} from './serve-option-validation'
+ 
+ const validOptions = {
+   noPairing: false,
+@@ -31,6 +35,47 @@ describe('getServeOptionValidationError', () => {
+   })
+ })
+ 
++describe('getServeBindHostValidationError', () => {
++  it.each(['127.0.0.1', '100.64.0.0', '100.64.1.20', '100.100.100.100', '100.127.255.255'])(
++    'accepts loopback or a Tailscale IPv4 %j',
++    (host) => {
++      expect(getServeBindHostValidationError(host)).toBeNull()
++    }
++  )
++
++  it.each([
++    '0.0.0.0',
++    '::',
++    '::1',
++    '[::]',
++    'localhost',
++    '127.0.0.2',
++    '100.63.255.255',
++    '100.128.0.0',
++    '192.168.1.10',
++    '10.0.0.5',
++    '172.16.0.1',
++    '192.0.2.1',
++    '8.8.8.8',
++    '100.64.0.0/10',
++    '100.64.1.20/32',
++    '100.064.1.20',
++    '100.64.1',
++    '100.64.1.20.5',
++    '100.64.1.256',
++    ' 100.64.1.20',
++    '100.64.1.20 ',
++    '100.64.1.20,100.64.1.21',
++    '100.64.1.20:6768',
++    'fd7a:115c:a1e0::1',
++    ''
++  ])('rejects %j', (host) => {
++    expect(getServeBindHostValidationError(host)).toMatch(
++      /--bind-host only supports 127\.0\.0\.1.*100\.64\.0\.0\/10/
++    )
++  })
++})
++
+ describe('getServeFlagTypoError', () => {
+   it('accepts exact serve flags and arbitrary Chromium switches', () => {
+     expect(
+diff --git a/src/shared/serve-option-validation.ts b/src/shared/serve-option-validation.ts
+index 36f844f322f2cc7e77c877d49c20a9ca27ffbcc3..fc6fd7e58bd5129628ab5ac7ff2194ff38f9b83f 100644
+--- a/src/shared/serve-option-validation.ts
++++ b/src/shared/serve-option-validation.ts
+@@ -1,4 +1,5 @@
+ import { levenshtein } from './edit-distance'
++import { isTailnetIPv4Address } from './tailnet-address'
+ 
+ export type ServeOptionValidationInput = {
+   noPairing: boolean
+@@ -23,6 +24,19 @@ export function getServeOptionValidationError(options: ServeOptionValidationInpu
+   return null
+ }
+ 
++/** A serve listener binds loopback or this host's tailnet IPv4 — never a wildcard, LAN or public address. */
++export function getServeBindHostValidationError(bindHost: string): string | null {
++  if (bindHost === '127.0.0.1') {
++    return null
++  }
++  // Why the round-trip: reject non-canonical octets like `064`, which some resolvers read as octal.
++  const canonical = bindHost.split('.').map(Number).join('.')
++  if (canonical === bindHost && isTailnetIPv4Address(bindHost)) {
++    return null
++  }
++  return '--bind-host only supports 127.0.0.1 (loopback) or a Tailscale IPv4 in 100.64.0.0/10.'
++}
++
+ const SERVE_SECURITY_FLAG_NAMES = [
+   '--no-pairing',
+   '--serve-no-pairing',
+@@ -31,7 +45,9 @@ const SERVE_SECURITY_FLAG_NAMES = [
+   '--recipe-json',
+   '--serve-recipe-json',
+   '--pairing-address',
+-  '--serve-pairing-address'
++  '--serve-pairing-address',
++  '--bind-host',
++  '--serve-bind-host'
+ ] as const
+ 
+ const SERVE_VALUE_FLAG_NAMES = new Set([
+@@ -39,6 +55,8 @@ const SERVE_VALUE_FLAG_NAMES = new Set([
+   '--serve-port',
+   '--pairing-address',
+   '--serve-pairing-address',
++  '--bind-host',
++  '--serve-bind-host',
+   '--project-root',
+   '--serve-project-root',
+   '--pairing-code',

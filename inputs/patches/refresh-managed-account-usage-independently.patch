@@ -1,0 +1,2588 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: refresh managed account usage independently
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Tests: Declared unit and integration gates in components/orca/build.toml.
+
+diff --git a/src/main/ipc/rate-limits.ts b/src/main/ipc/rate-limits.ts
+index 7882c398a0e670e1484ea3b8109b188837661e00..a53db892556ad886ec32d6e14f729c796c2665f3 100644
+--- a/src/main/ipc/rate-limits.ts
++++ b/src/main/ipc/rate-limits.ts
+@@ -30,4 +30,6 @@ export function registerRateLimitHandlers(
+   )
+   ipcMain.handle('rateLimits:refreshMiniMax', () => rateLimits.refresh())
+   ipcMain.handle('rateLimits:refreshGrok', () => rateLimits.refreshGrok())
++  // Why: one channel for every CodexBar-metered provider (Qwen Cloud) — they share one CLI batch.
++  ipcMain.handle('rateLimits:refreshCodexBar', () => rateLimits.refreshCodexBar())
+ }
+diff --git a/src/main/rate-limits/claude-active-usage-fetch.ts b/src/main/rate-limits/claude-active-usage-fetch.ts
+index f285ba13ce9343329a90f111c63579b6e5514259..047c922c097b845c8beb6edfcbe4b3af4e58b8bc 100644
+--- a/src/main/rate-limits/claude-active-usage-fetch.ts
++++ b/src/main/rate-limits/claude-active-usage-fetch.ts
+@@ -25,6 +25,7 @@ import {
+   makeClaudeUsageResult,
+   metadataForClaudeUsageAttempt,
+   recordClaudeUsageAttempt,
++  resolveClaudeAuthProvenance,
+   warnClaudeUsageFetchFailure
+ } from './claude-usage-result'
+ 
+@@ -32,7 +33,7 @@ export async function fetchActiveClaudeRateLimits(
+   options?: ClaudeRateLimitFetchOptions
+ ): Promise<ProviderRateLimits> {
+   if (options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(options.authPreparation))
+   }
+   const attempts = { attemptedSources: [] }
+   const allowCliFallback = options?.allowPtyFallback !== false
+@@ -57,15 +58,19 @@ export async function fetchActiveClaudeRateLimits(
+     resolveClaudeOAuthCredentialReadOptions(options?.authPreparation)
+   )
+   if (options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(options.authPreparation))
+   }
+ 
+   if (plan.steps.some((step) => step.source === 'oauth') && oauthCredentials.token) {
+     recordClaudeUsageAttempt(attempts, 'oauth')
+     try {
+-      const oauthLimits = await fetchClaudeOAuthUsage(oauthCredentials.token, options?.signal)
++      const oauthLimits = await fetchClaudeOAuthUsage(
++        oauthCredentials.token,
++        options?.signal,
++        resolveClaudeAuthProvenance(options?.authPreparation)
++      )
+       if (options?.signal?.aborted) {
+-        return abortedClaudeRateLimitResult()
++        return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(options.authPreparation))
+       }
+       return await completeClaudeOAuthUsageSuccess({
+         oauthLimits,
+diff --git a/src/main/rate-limits/claude-auth-diagnostics-log.ts b/src/main/rate-limits/claude-auth-diagnostics-log.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..455cd598b9b483f12da5dab45fe1c67caf8d5f38
+--- /dev/null
++++ b/src/main/rate-limits/claude-auth-diagnostics-log.ts
+@@ -0,0 +1,30 @@
++import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
++import { join } from 'node:path'
++import { app } from 'electron'
++
++// Why: packaged main-process console.warn goes nowhere, which left a 19h
++// refresh-failure loop unattributable in the field. Auth events land in an
++// append-only ndjson under the app's logs dir instead.
++const LOG_FILE = 'claude-auth-diagnostics.ndjson'
++const MAX_LOG_BYTES = 2 * 1024 * 1024
++
++export function logClaudeAuthDiagnostic(
++  event: string,
++  fields: Record<string, string | number | boolean | null | undefined> = {}
++): void {
++  try {
++    const dir = join(app.getPath('userData'), 'logs')
++    mkdirSync(dir, { recursive: true })
++    const file = join(dir, LOG_FILE)
++    try {
++      if (statSync(file).size > MAX_LOG_BYTES) {
++        renameSync(file, `${file}.1`)
++      }
++    } catch {
++      // First write, or rotation raced another writer — both fine.
++    }
++    appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), event, ...fields })}\n`)
++  } catch {
++    // Why: diagnostics must never break an auth or usage path.
++  }
++}
+diff --git a/src/main/rate-limits/claude-cli-usage-fetch.ts b/src/main/rate-limits/claude-cli-usage-fetch.ts
+index 70d264a4e68f46e751994b37e46d03b9b731c0a3..edf15b550ee1ccbe02d572aad89c9f57b56aa8c0 100644
+--- a/src/main/rate-limits/claude-cli-usage-fetch.ts
++++ b/src/main/rate-limits/claude-cli-usage-fetch.ts
+@@ -11,6 +11,7 @@ import {
+   mergeClaudeUsageWindows,
+   metadataForClaudeUsageAttempt,
+   recordClaudeUsageAttempt,
++  resolveClaudeAuthProvenance,
+   type ClaudeUsageAttemptState,
+   warnClaudeUsageFetchFailure,
+   withClaudeUsageMetadata
+@@ -103,7 +104,7 @@ export async function completeClaudeOAuthUsageSuccess(input: {
+     signal: input.options?.signal
+   })
+   if (input.options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(input.options.authPreparation))
+   }
+   return withClaudeUsageMetadata(
+     limits,
+diff --git a/src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts b/src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts
+index c01bcb00f6eb6acb3e7968c27a025b1454ffdef8..cdbac4003ea440af6ad03c585c3c82f419e3cd73 100644
+--- a/src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts
++++ b/src/main/rate-limits/claude-fetcher-managed-account-usage.test.ts
+@@ -15,6 +15,8 @@ import {
+   writeActiveClaudeKeychainCredentials,
+   writeManagedClaudeKeychainCredentials
+ } from '../claude-accounts/keychain'
++import { resetClaudeOauthRefreshRuntimeStateForTest } from '../claude-accounts/oauth-refresh'
++import { takeClaudeUsagePollBudget } from './claude-usage-poll-budget'
+ 
+ const { netFetchMock, readFileMock, resolveProxyMock, setProxyMock, appGetPathMock } = vi.hoisted(
+   () => ({
+@@ -70,6 +72,7 @@ describe('fetchClaudeRateLimits', () => {
+       setProxyMock,
+       appGetPathMock
+     })
++    resetClaudeOauthRefreshRuntimeStateForTest()
+   })
+ 
+   afterEach(() => {
+@@ -102,7 +105,10 @@ describe('fetchClaudeRateLimits', () => {
+     ).resolves.toMatchObject({
+       provider: 'claude',
+       status: 'error',
+-      error: 'No credentials'
++      error: 'No credentials',
++      // Why: a result that cannot name its account is discarded by meter
++      // retention, which would then show the previous account's quota here.
++      usageMetadata: { authProvenance: 'managed:account-1' }
+     })
+ 
+     expect(netFetchMock).not.toHaveBeenCalled()
+@@ -152,15 +158,25 @@ describe('fetchClaudeRateLimits', () => {
+       status: 'ok',
+       session: { usedPercent: 12 },
+       weekly: { usedPercent: 34 },
+-      fableWeekly: { usedPercent: 42, resetDescription: '2d' }
++      fableWeekly: { usedPercent: 42, resetDescription: '2d' },
++      usageMetadata: { authProvenance: 'managed:account-1' }
+     })
+     expect(fetchViaPty).toHaveBeenCalledWith({
+       authPreparation: expect.objectContaining({
+         configDir: canonicalAuthPath,
+-        envPatch: { CLAUDE_CONFIG_DIR: canonicalAuthPath },
++        // Why: the preview CLI keys its Keychain lookup on the securestorage
++        // dir, so an unpinned one reads the active account's quota instead.
++        envPatch: {
++          CLAUDE_CONFIG_DIR: canonicalAuthPath,
++          CLAUDE_SECURESTORAGE_CONFIG_DIR: canonicalAuthPath
++        },
++        accountId: 'account-1',
++        configDirRoute: 'account-dir',
+         provenance: 'managed:account-1:inactive-preview',
+         stripAuthEnv: true
+-      })
++      }),
++      networkProxySettings: undefined,
++      signal: undefined
+     })
+   })
+ 
+@@ -422,4 +438,158 @@ describe('fetchClaudeRateLimits', () => {
+     )
+     expect(usageCall?.[1]?.headers?.Authorization).toBe('Bearer fresh-access')
+   })
++
++  it('does not replay a hard-expired bearer when its refresh fails', async () => {
++    setPlatform('linux')
++    tempDir = mkdtempSync(join(tmpdir(), 'orca-claude-fetcher-'))
++    appGetPathMock.mockReturnValue(tempDir)
++    const ownedAuthPath = join(tempDir, 'claude-accounts', 'account-1', 'auth')
++    mkdirSync(ownedAuthPath, { recursive: true })
++    writeFileSync(join(ownedAuthPath, '.orca-managed-claude-auth'), 'account-1\n', 'utf-8')
++    writeFileSync(
++      join(ownedAuthPath, '.credentials.json'),
++      JSON.stringify({
++        claudeAiOauth: {
++          accessToken: 'expired-token',
++          refreshToken: 'dead-refresh',
++          expiresAt: Date.now() - 60_000
++        }
++      }),
++      'utf-8'
++    )
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++    netFetchMock.mockResolvedValue({
++      ok: false,
++      status: 400,
++      headers: new Headers(),
++      json: async () => ({})
++    })
++
++    const result = await fetchManagedAccountUsage({
++      id: 'account-1',
++      managedAuthPath: ownedAuthPath
++    })
++
++    expect(result).toMatchObject({
++      provider: 'claude',
++      status: 'error',
++      error: 'Claude token refresh was rejected. Re-authenticate this account.'
++    })
++    expect(result.usageMetadata).toMatchObject({ failureKind: 'stale-token', source: 'oauth' })
++    expect(netFetchMock).toHaveBeenCalledTimes(1)
++    expect(netFetchMock).toHaveBeenCalledWith(
++      'https://api.anthropic.com/v1/oauth/token',
++      expect.anything()
++    )
++    warn.mockRestore()
++  })
++
++  it('propagates Retry-After as retryAtMs when the refresh is throttled', async () => {
++    setPlatform('linux')
++    tempDir = mkdtempSync(join(tmpdir(), 'orca-claude-fetcher-'))
++    appGetPathMock.mockReturnValue(tempDir)
++    const ownedAuthPath = join(tempDir, 'claude-accounts', 'account-1', 'auth')
++    mkdirSync(ownedAuthPath, { recursive: true })
++    writeFileSync(join(ownedAuthPath, '.orca-managed-claude-auth'), 'account-1\n', 'utf-8')
++    writeFileSync(
++      join(ownedAuthPath, '.credentials.json'),
++      JSON.stringify({
++        claudeAiOauth: {
++          accessToken: 'expired-token',
++          refreshToken: 'throttled-refresh',
++          expiresAt: Date.now() - 60_000
++        }
++      }),
++      'utf-8'
++    )
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++    netFetchMock.mockResolvedValue({
++      ok: false,
++      status: 429,
++      headers: new Headers({ 'retry-after': '300' }),
++      json: async () => ({})
++    })
++
++    const before = Date.now()
++    const result = await fetchManagedAccountUsage({
++      id: 'account-1',
++      managedAuthPath: ownedAuthPath
++    })
++
++    expect(result.status).toBe('error')
++    expect(result.usageMetadata).toMatchObject({ failureKind: 'rate-limited' })
++    expect(result.usageMetadata?.retryAtMs).toBeGreaterThanOrEqual(before + 300_000)
++    expect(result.usageMetadata?.retryAtMs).toBeLessThanOrEqual(Date.now() + 300_000)
++    expect(netFetchMock).toHaveBeenCalledTimes(1)
++    warn.mockRestore()
++  })
++
++  it('still uses a bearer within the refresh buffer when the refresh fails', async () => {
++    setPlatform('linux')
++    tempDir = mkdtempSync(join(tmpdir(), 'orca-claude-fetcher-'))
++    appGetPathMock.mockReturnValue(tempDir)
++    const ownedAuthPath = join(tempDir, 'claude-accounts', 'account-1', 'auth')
++    mkdirSync(ownedAuthPath, { recursive: true })
++    writeFileSync(join(ownedAuthPath, '.orca-managed-claude-auth'), 'account-1\n', 'utf-8')
++    writeFileSync(
++      join(ownedAuthPath, '.credentials.json'),
++      JSON.stringify({
++        claudeAiOauth: {
++          accessToken: 'still-valid-token',
++          refreshToken: 'transient-refresh',
++          expiresAt: Date.now() + 2 * 60_000
++        }
++      }),
++      'utf-8'
++    )
++    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
++    netFetchMock.mockImplementation(async (url: string) =>
++      url === 'https://api.anthropic.com/v1/oauth/token'
++        ? { ok: false, status: 503, headers: new Headers(), json: async () => ({}) }
++        : new Response(
++            JSON.stringify({ five_hour: { utilization: 12 }, seven_day: { utilization: 34 } }),
++            { status: 200 }
++          )
++    )
++
++    const result = await fetchManagedAccountUsage({
++      id: 'account-1',
++      managedAuthPath: ownedAuthPath
++    })
++
++    expect(result.status).toBe('ok')
++    expect(result.session).toMatchObject({ usedPercent: 12 })
++    expect(netFetchMock).toHaveBeenCalledTimes(2)
++    warn.mockRestore()
++  })
++
++  it('keeps a rotated bearer inside the account budget window', async () => {
++    setPlatform('linux')
++    tempDir = mkdtempSync(join(tmpdir(), 'orca-claude-fetcher-'))
++    appGetPathMock.mockReturnValue(tempDir)
++    const ownedAuthPath = join(tempDir, 'claude-accounts', 'account-1', 'auth')
++    mkdirSync(ownedAuthPath, { recursive: true })
++    writeFileSync(join(ownedAuthPath, '.orca-managed-claude-auth'), 'account-1\n', 'utf-8')
++    writeFileSync(
++      join(ownedAuthPath, '.credentials.json'),
++      JSON.stringify({
++        claudeAiOauth: {
++          accessToken: 'rotated-fresh-token',
++          refreshToken: 'live-refresh',
++          expiresAt: Date.now() + 60 * 60 * 1000
++        }
++      }),
++      'utf-8'
++    )
++    // Why: the budget is keyed by account, so exhausting the account window
++    // must defer even a never-seen bearer — a rotation cannot reopen the cap.
++    for (let i = 0; i < 25; i++) {
++      takeClaudeUsagePollBudget('managed:account-1')
++    }
++
++    await expect(
++      fetchManagedAccountUsage({ id: 'account-1', managedAuthPath: ownedAuthPath })
++    ).rejects.toMatchObject({ status: 429 })
++    expect(netFetchMock).not.toHaveBeenCalled()
++  })
+ })
+diff --git a/src/main/rate-limits/claude-fetcher-test-harness.ts b/src/main/rate-limits/claude-fetcher-test-harness.ts
+index f679d83883377648c6ce2a161c4a40d37673a604..851ed2c54b6c6d6abff2ebc0ba7996e229d16d85 100644
+--- a/src/main/rate-limits/claude-fetcher-test-harness.ts
++++ b/src/main/rate-limits/claude-fetcher-test-harness.ts
+@@ -9,6 +9,7 @@ import {
+   writeActiveClaudeKeychainCredentials,
+   writeManagedClaudeKeychainCredentials
+ } from '../claude-accounts/keychain'
++import { resetClaudeUsagePollBudgetForTest } from './claude-usage-poll-budget'
+ 
+ /** Electron/fs mocks each claude-fetcher test file declares via its own `vi.mock` factories. */
+ export type ClaudeFetcherHoistedMocks = {
+@@ -38,6 +39,7 @@ export function restorePlatform(): void {
+ export function primeClaudeFetcherMocks(mocks: ClaudeFetcherHoistedMocks): void {
+   setPlatform('darwin')
+   vi.clearAllMocks()
++  resetClaudeUsagePollBudgetForTest()
+   mocks.readFileMock.mockRejectedValue(new Error('missing file'))
+   vi.mocked(readActiveClaudeKeychainCredentials).mockResolvedValue(null)
+   vi.mocked(readActiveClaudeKeychainCredentialsStrict).mockResolvedValue(null)
+diff --git a/src/main/rate-limits/claude-managed-account-credentials.ts b/src/main/rate-limits/claude-managed-account-credentials.ts
+index 71d505510cf117df6467c09c387959a146a81135..41a202a91626b5df6df954cdcf486a0740e5f46c 100644
+--- a/src/main/rate-limits/claude-managed-account-credentials.ts
++++ b/src/main/rate-limits/claude-managed-account-credentials.ts
+@@ -97,6 +97,15 @@ function resolveOwnedWslClaudeManagedAuthPath(account: InactiveClaudeAccount): s
+   }
+ }
+ 
++/**
++ * Runs `operation` with the account's credentials readable by a CLI pinned to
++ * that account's config dir.
++ *
++ * Since per-account isolation, that dir-scoped Keychain item is not scratch
++ * space: it is the account's canonical credential surface, which a live
++ * session of that account reads. So whatever was there is put back afterwards,
++ * and the item is deleted only when the preview is what created it.
++ */
+ export async function withClaudeManagedPreviewKeychainCredentials<T>(
+   location: ClaudeManagedCredentialsLocation,
+   credentialsJson: string,
+@@ -105,11 +114,23 @@ export async function withClaudeManagedPreviewKeychainCredentials<T>(
+   if (location.kind !== 'keychain') {
+     return operation()
+   }
+-  await writeActiveClaudeKeychainCredentials(credentialsJson, location.managedAuthPath)
++  const existingCredentialsJson = await readActiveClaudeKeychainCredentialsStrict(
++    location.managedAuthPath
++  ).catch(() => null)
++  if (existingCredentialsJson !== credentialsJson) {
++    await writeActiveClaudeKeychainCredentials(credentialsJson, location.managedAuthPath)
++  }
+   try {
+     return await operation()
+   } finally {
+-    await deleteActiveClaudeKeychainCredentialsStrict(location.managedAuthPath).catch(() => {})
++    if (existingCredentialsJson === null) {
++      await deleteActiveClaudeKeychainCredentialsStrict(location.managedAuthPath).catch(() => {})
++    } else if (existingCredentialsJson !== credentialsJson) {
++      await writeActiveClaudeKeychainCredentials(
++        existingCredentialsJson,
++        location.managedAuthPath
++      ).catch(() => {})
++    }
+   }
+ }
+ 
+diff --git a/src/main/rate-limits/claude-managed-account-usage.ts b/src/main/rate-limits/claude-managed-account-usage.ts
+index ddf7b3df750863fe90f49c918f93b740f7211c54..68edee2854e1cf81fad3efb2546f4fcfc7e27cfa 100644
+--- a/src/main/rate-limits/claude-managed-account-usage.ts
++++ b/src/main/rate-limits/claude-managed-account-usage.ts
+@@ -1,8 +1,11 @@
+ import type { ProviderRateLimits } from '../../shared/rate-limit-types'
+ import {
++  isOauthTokenExpired,
+   isOauthTokenExpiring,
+-  refreshClaudeOauthCredentials
++  refreshClaudeOauthCredentialsOutcome,
++  type ClaudeOauthRefreshFailure
+ } from '../claude-accounts/oauth-refresh'
++import { logClaudeAuthDiagnostic } from './claude-auth-diagnostics-log'
+ import {
+   readClaudeManagedCredentialsJson,
+   resolveClaudeManagedCredentialsLocation,
+@@ -16,42 +19,80 @@ import type { ClaudeManagedAccountUsageOptions } from './claude-usage-fetch-opti
+ import {
+   abortedClaudeRateLimitResult,
+   canSupplementClaudeOAuthUsage,
++  makeClaudeUsageResult,
+   mergeClaudeUsageWindows,
++  metadataForClaudeUsageAttempt,
+   warnClaudeUsageFetchFailure
+ } from './claude-usage-result'
+ 
+-function noClaudeManagedCredentialsResult(): ProviderRateLimits {
++function noClaudeManagedCredentialsResult(authProvenance: string): ProviderRateLimits {
+   return {
+     provider: 'claude',
+     session: null,
+     weekly: null,
+     updatedAt: Date.now(),
+     error: 'No credentials',
+-    status: 'error'
++    status: 'error',
++    usageMetadata: { authProvenance }
+   }
+ }
+ 
++// Why: a hard-expired bearer is a guaranteed 401 that feeds per-token
++// throttling; report the refresh failure instead of replaying it.
++function staleClaudeManagedCredentialsResult(
++  credentialsJson: string,
++  failure: ClaudeOauthRefreshFailure | null,
++  authProvenance: string
++): ProviderRateLimits {
++  const oauthCredentials = parseClaudeOAuthCredentialsJson(credentialsJson, 'credentials-file')
++  const rateLimited = failure?.status === 429
++  const rejected = failure?.status === 400 || failure?.status === 401
++  const retryAfterMs = failure?.retryAfterMs
++  return makeClaudeUsageResult(
++    'error',
++    rateLimited
++      ? 'Claude token refresh is rate limited right now.'
++      : rejected || !oauthCredentials.hasRefreshableCredentials
++        ? 'Claude token refresh was rejected. Re-authenticate this account.'
++        : (failure?.message ?? 'Claude token refresh failed.'),
++    metadataForClaudeUsageAttempt({
++      attemptedSources: ['oauth'],
++      oauthCredentials,
++      authProvenance,
++      source: 'oauth',
++      failureKind: rateLimited
++        ? 'rate-limited'
++        : rejected || !oauthCredentials.hasRefreshableCredentials
++          ? 'stale-token'
++          : 'network',
++      retryAtMs: retryAfterMs ? Date.now() + retryAfterMs : undefined
++    })
++  )
++}
++
+ export async function fetchInactiveClaudeAccountUsage(
+   account: InactiveClaudeAccount,
+   options: ClaudeManagedAccountUsageOptions = {}
+ ): Promise<ProviderRateLimits> {
++  const authProvenance = `managed:${account.id}`
+   if (options.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(authProvenance)
+   }
+   const location = resolveClaudeManagedCredentialsLocation(account)
+   let credentialsJson = location ? await readClaudeManagedCredentialsJson(location) : null
+   if (options.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(authProvenance)
+   }
+   if (!location || !credentialsJson) {
+-    return noClaudeManagedCredentialsResult()
++    return noClaudeManagedCredentialsResult(authProvenance)
+   }
+ 
+   let token = parseClaudeOAuthCredentialsJson(credentialsJson, 'credentials-file').token
+   if (isOauthTokenExpiring(credentialsJson)) {
+-    const refreshed = await refreshClaudeOauthCredentials(credentialsJson)
++    const { credentialsJson: refreshed, failure } =
++      await refreshClaudeOauthCredentialsOutcome(credentialsJson)
+     if (options.signal?.aborted) {
+-      return abortedClaudeRateLimitResult()
++      return abortedClaudeRateLimitResult(authProvenance)
+     }
+     if (refreshed) {
+       try {
+@@ -61,15 +102,22 @@ export async function fetchInactiveClaudeAccountUsage(
+       }
+       credentialsJson = refreshed
+       token = parseClaudeOAuthCredentialsJson(refreshed, 'credentials-file').token
++    } else if (isOauthTokenExpired(credentialsJson)) {
++      logClaudeAuthDiagnostic('claude-inactive-usage-skipped', {
++        accountId: account.id,
++        status: failure?.status ?? null
++      })
++      return staleClaudeManagedCredentialsResult(credentialsJson, failure, authProvenance)
+     }
++    // Why: within the refresh buffer the stored bearer is still valid; use it.
+   }
+ 
+   if (!token) {
+-    return noClaudeManagedCredentialsResult()
++    return noClaudeManagedCredentialsResult(authProvenance)
+   }
+-  const oauthLimits = await fetchClaudeOAuthUsage(token, options.signal)
++  const oauthLimits = await fetchClaudeOAuthUsage(token, options.signal, authProvenance)
+   if (options.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(authProvenance)
+   }
+   if (
+     !canSupplementClaudeOAuthUsage({
+diff --git a/src/main/rate-limits/claude-managed-usage-panel.ts b/src/main/rate-limits/claude-managed-usage-panel.ts
+index 15c1e90169c729c9d57668a248b9b89be472ec86..adafe88ff5af0e00384b841863d6697df4a7195c 100644
+--- a/src/main/rate-limits/claude-managed-usage-panel.ts
++++ b/src/main/rate-limits/claude-managed-usage-panel.ts
+@@ -1,6 +1,7 @@
+ import type { ProviderRateLimits, RateLimitWindow } from '../../shared/rate-limit-types'
+ import type { NetworkProxySettings } from '../../shared/network-proxy'
+ import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
++import { hasLiveClaudePtysForAccount } from '../claude-accounts/live-pty-gate'
+ import { fetchViaPty } from './claude-pty'
+ import {
+   readStagedClaudeManagedPreviewCredentials,
+@@ -28,6 +29,8 @@ function getManagedUsagePanelAuthPreparation(
+       wslLinuxConfigDir: account.wslLinuxAuthPath,
+       envPatch: { CLAUDE_CONFIG_DIR: account.wslLinuxAuthPath },
+       stripAuthEnv: true,
++      accountId: account.id,
++      configDirRoute: 'wsl-dir',
+       provenance: `managed:${account.id}:inactive-preview`
+     }
+   }
+@@ -36,8 +39,16 @@ function getManagedUsagePanelAuthPreparation(
+     runtime: 'host',
+     wslDistro: null,
+     wslLinuxConfigDir: null,
+-    envPatch: { CLAUDE_CONFIG_DIR: location.managedAuthPath },
++    envPatch: {
++      CLAUDE_CONFIG_DIR: location.managedAuthPath,
++      // Why: the preview CLI derives its Keychain service name from this dir.
++      // Without it, it reads whatever owns the default item and reports that
++      // account's quota under this one's name.
++      CLAUDE_SECURESTORAGE_CONFIG_DIR: location.managedAuthPath
++    },
+     stripAuthEnv: true,
++    accountId: account.id,
++    configDirRoute: 'account-dir',
+     provenance: `managed:${account.id}:inactive-preview`
+   }
+ }
+@@ -77,6 +88,13 @@ export async function fetchClaudeManagedUsagePanelSupplement(input: {
+   if (input.signal?.aborted) {
+     return null
+   }
++  // Why: this supplement runs a Claude CLI against the account's own surface,
++  // and that CLI refreshes tokens. While a session of the SAME account holds
++  // the single-use refresh token, a second rotation logs one of them out — the
++  // OAuth reading already gathered stands on its own.
++  if (hasLiveClaudePtysForAccount(input.account.id)) {
++    return null
++  }
+   const authPreparation = getManagedUsagePanelAuthPreparation(input.account, input.location)
+   if (!authPreparation) {
+     return null
+diff --git a/src/main/rate-limits/claude-oauth-credentials.ts b/src/main/rate-limits/claude-oauth-credentials.ts
+index 3e14fb2909e7b5fb8460c01c3eb68bfa9d9770d6..5d1d331be9ab0c6c89d48688fd8c670993c486ac 100644
+--- a/src/main/rate-limits/claude-oauth-credentials.ts
++++ b/src/main/rate-limits/claude-oauth-credentials.ts
+@@ -31,6 +31,14 @@ export type ClaudeOAuthCredentialReadResult = {
+ type ClaudeOAuthCredentialReadOptions = {
+   credentialsFileConfigDir?: string
+   keychainConfigDir?: string
++  /**
++   * Whether a scoped miss may fall back to the unscoped `Claude Code-credentials`
++   * item. True for the user's own ~/.claude, whose older Claude builds wrote
++   * there. False for a managed account's own dir: that item belongs to another
++   * surface, and reading it would report one account's quota under another's
++   * name.
++   */
++  allowUnscopedKeychainFallback?: boolean
+ }
+ 
+ export function parseClaudeOAuthCredentialsJson(
+@@ -64,14 +72,17 @@ function unavailableKeychainResult(): ClaudeOAuthCredentialReadResult {
+   }
+ }
+ 
+-async function readFromKeychain(configDir?: string): Promise<ClaudeOAuthCredentialReadResult> {
++async function readFromKeychain(
++  configDir: string | undefined,
++  allowUnscopedFallback: boolean
++): Promise<ClaudeOAuthCredentialReadResult> {
+   if (process.platform !== 'darwin') {
+     return emptyClaudeOAuthCredentialReadResult()
+   }
+ 
+   if (configDir) {
+     const scoped = await readClaudeCredentialsFromStrictKeychain(configDir, 'scoped-keychain')
+-    if (scoped.token) {
++    if (scoped.token || !allowUnscopedFallback) {
+       return scoped
+     }
+ 
+@@ -135,7 +146,10 @@ async function readFromCredentialsFile(
+ export async function readClaudeOAuthCredentials(
+   options?: ClaudeOAuthCredentialReadOptions
+ ): Promise<ClaudeOAuthCredentialReadResult> {
+-  const keychain = await readFromKeychain(options?.keychainConfigDir)
++  const keychain = await readFromKeychain(
++    options?.keychainConfigDir,
++    options?.allowUnscopedKeychainFallback ?? true
++  )
+   if (keychain.token || keychain.hasRefreshableCredentials) {
+     return keychain
+   }
+@@ -155,6 +169,10 @@ export function resolveClaudeOAuthCredentialReadOptions(
+   }
+   return {
+     credentialsFileConfigDir: authPreparation.configDir,
+-    keychainConfigDir: authPreparation.configDir
++    keychainConfigDir: authPreparation.configDir,
++    // Why: a managed account's dir owns its own Keychain item. Falling back to
++    // the unscoped one would read the user's own ~/.claude token and report its
++    // quota as this account's.
++    allowUnscopedKeychainFallback: authPreparation.configDirRoute !== 'account-dir'
+   }
+ }
+diff --git a/src/main/rate-limits/claude-oauth-recovery.ts b/src/main/rate-limits/claude-oauth-recovery.ts
+index 58c6bf91cb37052010005146a8ec18bdd6562a04..8976167a3b68e59542ea254d9371a2ce7d74bec8 100644
+--- a/src/main/rate-limits/claude-oauth-recovery.ts
++++ b/src/main/rate-limits/claude-oauth-recovery.ts
+@@ -19,6 +19,7 @@ import {
+   mergeClaudeUsageWindows,
+   metadataForClaudeUsageAttempt,
+   recordClaudeUsageAttempt,
++  resolveClaudeAuthProvenance,
+   type ClaudeUsageAttemptState,
+   warnClaudeUsageFetchFailure,
+   withClaudeUsageMetadata
+@@ -50,12 +51,18 @@ export async function retryClaudeOAuthWithLegacyKeychain(input: {
+     return null
+   }
+   if (input.options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(input.options.authPreparation))
+   }
+   try {
+-    const limits = await fetchClaudeOAuthUsage(legacy.token, input.options?.signal)
++    const limits = await fetchClaudeOAuthUsage(
++      legacy.token,
++      input.options?.signal,
++      resolveClaudeAuthProvenance(input.options?.authPreparation)
++    )
+     if (input.options?.signal?.aborted) {
+-      return abortedClaudeRateLimitResult()
++      return abortedClaudeRateLimitResult(
++        resolveClaudeAuthProvenance(input.options.authPreparation)
++      )
+     }
+     return await completeClaudeOAuthUsageSuccess({
+       oauthLimits: limits,
+@@ -124,7 +131,7 @@ export async function repairClaudeCredentialsThenRetryOAuth(input: {
+   oauthCredentials: ClaudeOAuthCredentialReadResult
+ }): Promise<ProviderRateLimits | null> {
+   if (input.options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(input.options.authPreparation))
+   }
+   let cliResult: ProviderRateLimits | null = null
+   try {
+@@ -140,20 +147,26 @@ export async function repairClaudeCredentialsThenRetryOAuth(input: {
+   }
+ 
+   if (input.options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(input.options.authPreparation))
+   }
+   const refreshed = await readClaudeOAuthCredentials(
+     resolveClaudeOAuthCredentialReadOptions(input.options?.authPreparation)
+   )
+   if (input.options?.signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(resolveClaudeAuthProvenance(input.options.authPreparation))
+   }
+   if (refreshed.token) {
+     recordClaudeUsageAttempt(input.attempts, 'oauth')
+     try {
+-      const retry = await fetchClaudeOAuthUsage(refreshed.token, input.options?.signal)
++      const retry = await fetchClaudeOAuthUsage(
++        refreshed.token,
++        input.options?.signal,
++        resolveClaudeAuthProvenance(input.options?.authPreparation)
++      )
+       if (input.options?.signal?.aborted) {
+-        return abortedClaudeRateLimitResult()
++        return abortedClaudeRateLimitResult(
++          resolveClaudeAuthProvenance(input.options.authPreparation)
++        )
+       }
+       return withClaudeUsageMetadata(
+         mergeClaudeUsageWindows(retry, cliResult),
+diff --git a/src/main/rate-limits/claude-oauth-usage-error.ts b/src/main/rate-limits/claude-oauth-usage-error.ts
+index 1ccb1471de6155f09196fb69a86ca3b2ed3ca769..aaa1d8ffbe15b68194bed2d90bb8b9c415b0a4d8 100644
+--- a/src/main/rate-limits/claude-oauth-usage-error.ts
++++ b/src/main/rate-limits/claude-oauth-usage-error.ts
+@@ -23,7 +23,7 @@ export async function createOAuthUsageError(res: Response): Promise<OAuthUsageEr
+   )
+ }
+ 
+-function parseRetryAfterMs(header: string | null): number | null {
++export function parseRetryAfterMs(header: string | null): number | null {
+   if (!header) {
+     return null
+   }
+diff --git a/src/main/rate-limits/claude-oauth-usage-request.ts b/src/main/rate-limits/claude-oauth-usage-request.ts
+index 9565a064514ef29b51f3977f61aaa846026a3d7d..423466b09e26c2769a6d361314373d32dadf0800 100644
+--- a/src/main/rate-limits/claude-oauth-usage-request.ts
++++ b/src/main/rate-limits/claude-oauth-usage-request.ts
+@@ -4,6 +4,9 @@ import { ensureElectronProxyFromEnvironment } from '../network/proxy-settings'
+ import { createOAuthUsageError } from './claude-oauth-usage-error'
+ import { mapClaudeUsageWindow, type ClaudeUsageWindowInput } from './claude-usage-window'
+ import { abortedClaudeRateLimitResult } from './claude-usage-result'
++import { logClaudeAuthDiagnostic } from './claude-auth-diagnostics-log'
++import { OAuthUsageError } from './claude-oauth-usage-error'
++import { takeClaudeUsagePollBudget } from './claude-usage-poll-budget'
+ 
+ const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+ const API_TIMEOUT_MS = 10_000
+@@ -54,14 +57,29 @@ function mapFableWeeklyWindow(data: OAuthUsageResponse): RateLimitWindow | null
+ 
+ export async function fetchClaudeOAuthUsage(
+   token: string,
+-  signal?: AbortSignal
++  signal?: AbortSignal,
++  // Why: the caller's surface identity doubles as the poll budget key — it must
++  // survive token rotation, and every result must name the account it read.
++  authProvenance?: string
+ ): Promise<ProviderRateLimits> {
+   if (signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(authProvenance)
++  }
++  // Why: the usage endpoint budgets ~28-30 reads per identity-hour; overshooting
++  // earns per-token 429s with retry-after up to an hour, so defer locally first.
++  const budget = takeClaudeUsagePollBudget(authProvenance ?? token)
++  if (!budget.ok) {
++    logClaudeAuthDiagnostic('claude-usage-budget-deferred', { retryAfterMs: budget.retryAfterMs })
++    throw new OAuthUsageError(
++      'Claude usage polling budget exhausted for this identity.',
++      429,
++      true,
++      budget.retryAfterMs
++    )
+   }
+   await ensureProxyFromEnvironment()
+   if (signal?.aborted) {
+-    return abortedClaudeRateLimitResult()
++    return abortedClaudeRateLimitResult(authProvenance)
+   }
+ 
+   const requestSignal = signal
+@@ -78,12 +96,16 @@ export async function fetchClaudeOAuthUsage(
+       signal: requestSignal
+     })
+     if (!response.ok) {
++      logClaudeAuthDiagnostic('claude-usage-error', {
++        status: response.status,
++        retryAfter: response.headers?.get('retry-after') ?? null
++      })
+       throw await createOAuthUsageError(response)
+     }
+ 
+     const data = (await response.json()) as OAuthUsageResponse
+     if (signal?.aborted) {
+-      return abortedClaudeRateLimitResult()
++      return abortedClaudeRateLimitResult(authProvenance)
+     }
+     return {
+       provider: 'claude',
+@@ -92,11 +114,12 @@ export async function fetchClaudeOAuthUsage(
+       fableWeekly: mapFableWeeklyWindow(data),
+       updatedAt: Date.now(),
+       error: null,
+-      status: 'ok'
++      status: 'ok',
++      ...(authProvenance ? { usageMetadata: { authProvenance } } : {})
+     }
+   } catch (error) {
+     if (signal?.aborted) {
+-      return abortedClaudeRateLimitResult()
++      return abortedClaudeRateLimitResult(authProvenance)
+     }
+     throw error
+   }
+diff --git a/src/main/rate-limits/claude-pty-usage-parser.ts b/src/main/rate-limits/claude-pty-usage-parser.ts
+index 3328d94716006f719a07060cadd1bd5663f0a8f4..7b719ecc39c26110078a0f438d43b676d34969dc 100644
+--- a/src/main/rate-limits/claude-pty-usage-parser.ts
++++ b/src/main/rate-limits/claude-pty-usage-parser.ts
+@@ -154,13 +154,14 @@ export function describeClaudeUsageFailure(output: string): string {
+   return 'Claude usage is unavailable right now.'
+ }
+ 
+-export function abortedClaudeUsageResult(): ProviderRateLimits {
++export function abortedClaudeUsageResult(authProvenance?: string): ProviderRateLimits {
+   return {
+     provider: 'claude',
+     session: null,
+     weekly: null,
+     updatedAt: Date.now(),
+     error: 'Rate-limit fetch aborted',
+-    status: 'error'
++    status: 'error',
++    ...(authProvenance ? { usageMetadata: { authProvenance } } : {})
+   }
+ }
+diff --git a/src/main/rate-limits/claude-pty.ts b/src/main/rate-limits/claude-pty.ts
+index cbaedbd17f9dc4143898b06838f55a6673b9ce1a..df243f080df410d8c6ed70f013695b90ad9fedee 100644
+--- a/src/main/rate-limits/claude-pty.ts
++++ b/src/main/rate-limits/claude-pty.ts
+@@ -45,12 +45,17 @@ export async function fetchViaPty(options?: {
+   networkProxySettings?: NetworkProxySettings
+   signal?: AbortSignal
+ }): Promise<ProviderRateLimits> {
++  // Why: this probe runs against whichever Claude config dir the preparation
++  // pins, so every result it resolves names that surface. A result that cannot
++  // name its account is treated as a different account by meter retention.
++  const authProvenance = options?.authPreparation?.provenance
++  const provenanceMetadata = authProvenance ? { usageMetadata: { authProvenance } } : {}
+   if (options?.signal?.aborted) {
+-    return abortedClaudeUsageResult()
++    return abortedClaudeUsageResult(authProvenance)
+   }
+   const pty = await import('node-pty')
+   if (options?.signal?.aborted) {
+-    return abortedClaudeUsageResult()
++    return abortedClaudeUsageResult(authProvenance)
+   }
+ 
+   return new Promise<ProviderRateLimits>((resolve) => {
+@@ -158,7 +163,7 @@ export async function fetchViaPty(options?: {
+       }
+       clearFollowupTimers()
+       cleanupHiddenRateLimitPty(term, termDisposables, { kill: true })
+-      resolve(abortedClaudeUsageResult())
++      resolve(abortedClaudeUsageResult(authProvenance))
+     }
+ 
+     if (options?.signal) {
+@@ -188,7 +193,8 @@ export async function fetchViaPty(options?: {
+             fableWeekly,
+             updatedAt: Date.now(),
+             error: null,
+-            status: 'ok'
++            status: 'ok',
++            ...provenanceMetadata
+           })
+         } else {
+           resolve({
+@@ -202,7 +208,8 @@ export async function fetchViaPty(options?: {
+                 : 'PTY timeout — /usage panel did not render',
+               clean
+             ),
+-            status: 'error'
++            status: 'error',
++            ...provenanceMetadata
+           })
+         }
+       }
+@@ -243,7 +250,8 @@ export async function fetchViaPty(options?: {
+           weekly: null,
+           updatedAt: Date.now(),
+           error: withMacTailscaleDnsHint(describeClaudeUsageFailure(clean), clean),
+-          status: 'error'
++          status: 'error',
++          ...provenanceMetadata
+         })
+       } else {
+         resolve({
+@@ -253,7 +261,8 @@ export async function fetchViaPty(options?: {
+           fableWeekly,
+           updatedAt: Date.now(),
+           error: null,
+-          status: 'ok'
++          status: 'ok',
++          ...provenanceMetadata
+         })
+       }
+     }
+diff --git a/src/main/rate-limits/claude-usage-poll-budget.test.ts b/src/main/rate-limits/claude-usage-poll-budget.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc9e62b1380a1caac97da136ae4b33805a6b73e0
+--- /dev/null
++++ b/src/main/rate-limits/claude-usage-poll-budget.test.ts
+@@ -0,0 +1,40 @@
++import { beforeEach, describe, expect, it } from 'vitest'
++import {
++  resetClaudeUsagePollBudgetForTest,
++  takeClaudeUsagePollBudget
++} from './claude-usage-poll-budget'
++
++const NOW = 1_700_000_000_000
++const HOUR = 60 * 60 * 1000
++
++describe('takeClaudeUsagePollBudget', () => {
++  beforeEach(() => {
++    resetClaudeUsagePollBudgetForTest()
++  })
++
++  it('allows 25 calls per identity-hour then defers with a retry hint', () => {
++    for (let i = 0; i < 25; i++) {
++      expect(takeClaudeUsagePollBudget('token-a', NOW + i * 1000)).toEqual({ ok: true })
++    }
++    const deferred = takeClaudeUsagePollBudget('token-a', NOW + 26_000)
++    expect(deferred.ok).toBe(false)
++    if (!deferred.ok) {
++      expect(deferred.retryAfterMs).toBe(NOW + HOUR - (NOW + 26_000))
++    }
++  })
++
++  it('frees budget as the sliding window moves past old calls', () => {
++    for (let i = 0; i < 25; i++) {
++      takeClaudeUsagePollBudget('token-a', NOW + i * 1000)
++    }
++    expect(takeClaudeUsagePollBudget('token-a', NOW + HOUR + 500).ok).toBe(true)
++  })
++
++  it('budgets keys independently', () => {
++    for (let i = 0; i < 25; i++) {
++      takeClaudeUsagePollBudget('managed:account-1', NOW + i * 1000)
++    }
++    expect(takeClaudeUsagePollBudget('managed:account-1', NOW + 26_000).ok).toBe(false)
++    expect(takeClaudeUsagePollBudget('managed:account-2', NOW + 26_000).ok).toBe(true)
++  })
++})
+diff --git a/src/main/rate-limits/claude-usage-poll-budget.ts b/src/main/rate-limits/claude-usage-poll-budget.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8e9c68ca0b34715fd508059777282e4d8191f684
+--- /dev/null
++++ b/src/main/rate-limits/claude-usage-poll-budget.ts
+@@ -0,0 +1,34 @@
++// Why: the usage endpoint enforces roughly 28-30 reads per identity-hour on a
++// sliding window (measured by claude-swap's poll_policy and claude-code#77477).
++// Spending the full budget earns per-token 429s with retry-after up to an hour,
++// so a client-side cap keeps polls under the server's threshold.
++const WINDOW_MS = 60 * 60 * 1000
++const MAX_CALLS_PER_WINDOW = 25
++
++const callTimesByToken = new Map<string, number[]>()
++
++export type ClaudeUsageBudgetDecision = { ok: true } | { ok: false; retryAfterMs: number }
++
++export function takeClaudeUsagePollBudget(
++  token: string,
++  now: number = Date.now()
++): ClaudeUsageBudgetDecision {
++  const cutoff = now - WINDOW_MS
++  for (const [key, times] of callTimesByToken) {
++    if (key !== token && (times.at(-1) ?? 0) <= cutoff) {
++      callTimesByToken.delete(key)
++    }
++  }
++  const times = (callTimesByToken.get(token) ?? []).filter((t) => t > cutoff)
++  if (times.length >= MAX_CALLS_PER_WINDOW) {
++    callTimesByToken.set(token, times)
++    return { ok: false, retryAfterMs: times[0] + WINDOW_MS - now }
++  }
++  times.push(now)
++  callTimesByToken.set(token, times)
++  return { ok: true }
++}
++
++export function resetClaudeUsagePollBudgetForTest(): void {
++  callTimesByToken.clear()
++}
+diff --git a/src/main/rate-limits/claude-usage-result.ts b/src/main/rate-limits/claude-usage-result.ts
+index aea522e673bf425a850251a8b58492e79db2ac6c..944f99cc327e0cd0538117a9b3420567cf075eae 100644
+--- a/src/main/rate-limits/claude-usage-result.ts
++++ b/src/main/rate-limits/claude-usage-result.ts
+@@ -12,17 +12,30 @@ export type ClaudeUsageAttemptState = {
+   attemptedSources: UsageRateLimitSource[]
+ }
+ 
+-export function abortedClaudeRateLimitResult(): ProviderRateLimits {
++// Why: an abort still ran against a specific auth surface, and the retention
++// policy discards a sample whose identity a later result cannot match. A lane
++// that knows which account it was bound to must say so, or its own next read
++// looks like a different account's.
++export function abortedClaudeRateLimitResult(authProvenance?: string): ProviderRateLimits {
+   return {
+     provider: 'claude',
+     session: null,
+     weekly: null,
+     updatedAt: Date.now(),
+     error: 'Rate-limit fetch aborted',
+-    status: 'error'
++    status: 'error',
++    ...(authProvenance ? { usageMetadata: { authProvenance } } : {})
+   }
+ }
+ 
++// Why: the active lane's surface is the managed account when one is prepared,
++// and the user's own shared ~/.claude otherwise — never an unknown identity.
++export function resolveClaudeAuthProvenance(
++  authPreparation: ClaudeRuntimeAuthPreparation | undefined
++): string {
++  return authPreparation?.provenance ?? 'system'
++}
++
+ export function recordClaudeUsageAttempt(
+   state: ClaudeUsageAttemptState,
+   source: UsageRateLimitSource
+@@ -67,6 +80,8 @@ export function metadataForClaudeUsageAttempt(input: {
+   attemptedSources: UsageRateLimitSource[]
+   oauthCredentials: ClaudeOAuthCredentialReadResult
+   authPreparation?: ClaudeRuntimeAuthPreparation
++  /** Explicit surface identity for lanes that carry no ClaudeRuntimeAuthPreparation (inactive accounts). */
++  authProvenance?: string
+   source?: UsageRateLimitSource
+   failureKind?: UsageRateLimitFailureKind
+   deferredByLiveClaudeSession?: boolean
+@@ -77,7 +92,7 @@ export function metadataForClaudeUsageAttempt(input: {
+     attemptedSources: [...input.attemptedSources],
+     failureKind: input.failureKind,
+     credentialSource: input.oauthCredentials.source,
+-    authProvenance: input.authPreparation?.provenance ?? 'system',
++    authProvenance: input.authProvenance ?? resolveClaudeAuthProvenance(input.authPreparation),
+     deferredByLiveClaudeSession: input.deferredByLiveClaudeSession,
+     retryAtMs: input.retryAtMs
+   }
+diff --git a/src/main/rate-limits/service-account-target-selection.test.ts b/src/main/rate-limits/service-account-target-selection.test.ts
+index 2deeadfcdaad1f3d0b8cd80f585fa44c388c54a9..eaa8d74ee719224d3a54418fb01adedc90469b76 100644
+--- a/src/main/rate-limits/service-account-target-selection.test.ts
++++ b/src/main/rate-limits/service-account-target-selection.test.ts
+@@ -40,6 +40,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service-antigravity-usage.test.ts b/src/main/rate-limits/service-antigravity-usage.test.ts
+index 9f2fc2c8244cb22c926b78914162dab8e64af682..b2867e4f65f44861aa776fede613663466028183 100644
+--- a/src/main/rate-limits/service-antigravity-usage.test.ts
++++ b/src/main/rate-limits/service-antigravity-usage.test.ts
+@@ -39,6 +39,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service-cursor-usage.test.ts b/src/main/rate-limits/service-cursor-usage.test.ts
+index 37984b89a522b330930d3d33888d83608a8dd389..b5999c62b5555b5fb82e5a944bfa6bcf96e2d565 100644
+--- a/src/main/rate-limits/service-cursor-usage.test.ts
++++ b/src/main/rate-limits/service-cursor-usage.test.ts
+@@ -25,6 +25,10 @@ vi.mock('./grok-fetcher', () => ({ fetchGrokRateLimits: vi.fn() }))
+ vi.mock('./grok-auth', () => ({ readGrokAuthSession: vi.fn(() => ({ status: 'missing' })) }))
+ vi.mock('./cursor-fetcher', () => ({ fetchCursorRateLimits: vi.fn() }))
+ vi.mock('./cursor-auth', () => ({ readCursorAuthSession: vi.fn() }))
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
+ vi.mock('../minimax/minimax-cookie-store', () => ({ hasMiniMaxSessionCookie: vi.fn(() => false) }))
+ 
+ type JwtSegment = Record<string, unknown>
+diff --git a/src/main/rate-limits/service-inactive-account-previews.test.ts b/src/main/rate-limits/service-inactive-account-previews.test.ts
+index 300292efcc216da3f1898f8de24cd47ed01be4a9..cb24304e441b78af161b4859572668f5d9c8a2d4 100644
+--- a/src/main/rate-limits/service-inactive-account-previews.test.ts
++++ b/src/main/rate-limits/service-inactive-account-previews.test.ts
+@@ -47,6 +47,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+@@ -460,4 +465,130 @@ describe('RateLimitService', () => {
+       }
+     ])
+   })
++
++  function managedAccountContext() {
++    return {
++      activeClaudeAccountId: null,
++      activeCodexAccountId: null,
++      claudeSystemDefault: null,
++      codexSystemDefault: null
++    }
++  }
++
++  it('refreshes inactive accounts from the poll cycle', async () => {
++    const service = new RateLimitService()
++    service.setManagedAccountContextResolver(managedAccountContext)
++    service.setInactiveClaudeAccountsResolver(() => [
++      { id: 'account-1', managedAuthPath: '/tmp/account-1/auth' }
++    ])
++    service.setClaudeAuthPreparationResolver(async () => ({
++      configDir: '/tmp/.claude',
++      envPatch: {},
++      stripAuthEnv: false,
++      provenance: 'system'
++    }))
++    vi.mocked(fetchClaudeRateLimits).mockResolvedValue(okProvider('claude', 7))
++    vi.mocked(fetchManagedAccountUsage).mockResolvedValue(okProvider('claude', 61))
++
++    await service.refresh()
++    await vi.waitFor(() =>
++      expect(service.getState().inactiveClaudeAccounts).toEqual([
++        {
++          accountId: 'account-1',
++          rateLimits: expect.objectContaining({
++            session: expect.objectContaining({ usedPercent: 61 })
++          }),
++          updatedAt: expect.any(Number),
++          isFetching: false
++        }
++      ])
++    )
++  })
++
++  it('skips the poll-driven inactive refresh when no account context is published', async () => {
++    const service = new RateLimitService()
++    service.setInactiveClaudeAccountsResolver(() => [
++      { id: 'account-1', managedAuthPath: '/tmp/account-1/auth' }
++    ])
++    vi.mocked(fetchClaudeRateLimits).mockResolvedValue(okProvider('claude', 7))
++    vi.mocked(fetchManagedAccountUsage).mockResolvedValue(okProvider('claude', 61))
++
++    await service.refresh()
++
++    expect(fetchManagedAccountUsage).not.toHaveBeenCalled()
++  })
++
++  it('records a per-account failure instead of keeping the previous percentage', async () => {
++    vi.useFakeTimers()
++    try {
++      const service = new RateLimitService()
++      service.setInactiveClaudeAccountsResolver(() => [
++        { id: 'account-1', managedAuthPath: '/tmp/account-1/auth' }
++      ])
++      vi.mocked(fetchManagedAccountUsage).mockResolvedValueOnce(okProvider('claude', 61))
++      await service.fetchInactiveClaudeAccountsOnOpen()
++      expect(service.getState().inactiveClaudeAccounts[0]?.rateLimits?.session?.usedPercent).toBe(
++        61
++      )
++
++      await vi.advanceTimersByTimeAsync(10 * 60_000)
++      vi.mocked(fetchManagedAccountUsage).mockRejectedValueOnce(new Error('429 Too Many Requests'))
++      await service.fetchInactiveClaudeAccountsOnOpen()
++
++      const entry = service.getState().inactiveClaudeAccounts[0]
++      expect(entry?.rateLimits).toMatchObject({
++        status: 'error',
++        error: '429 Too Many Requests'
++      })
++    } finally {
++      vi.useRealTimers()
++    }
++  })
++
++  it('passes the codex fetch target to the inactive-accounts resolver', async () => {
++    const service = new RateLimitService()
++    const seenTargets: { runtime: string; wslDistro: string | null }[] = []
++    service.setInactiveCodexAccountsResolver((target) => {
++      seenTargets.push(target)
++      return []
++    })
++
++    await service.fetchInactiveCodexAccountsOnOpen()
++    expect(seenTargets).toContainEqual({ runtime: 'host', wslDistro: null })
++
++    seenTargets.length = 0
++    service.setCodexFetchTarget({ runtime: 'wsl', wslDistro: 'Ubuntu' })
++    await service.fetchInactiveCodexAccountsOnOpen()
++    expect(seenTargets).toContainEqual({ runtime: 'wsl', wslDistro: 'Ubuntu' })
++  })
++
++  it('refetches inactive lanes when the account roster changes', async () => {
++    const service = new RateLimitService()
++    service.setManagedAccountContextResolver(managedAccountContext)
++    service.setInactiveClaudeAccountsResolver(() => [
++      { id: 'account-new', managedAuthPath: '/tmp/account-new/auth' }
++    ])
++    vi.mocked(fetchManagedAccountUsage).mockResolvedValue(okProvider('claude', 23))
++
++    service.evictInactiveClaudeCache('account-new')
++
++    await vi.waitFor(() =>
++      expect(service.getState().inactiveClaudeAccounts[0]?.rateLimits?.session?.usedPercent).toBe(
++        23
++      )
++    )
++  })
++
++  it('does not refetch on a roster change when no account context is published', async () => {
++    const service = new RateLimitService()
++    service.setInactiveClaudeAccountsResolver(() => [
++      { id: 'account-new', managedAuthPath: '/tmp/account-new/auth' }
++    ])
++    vi.mocked(fetchManagedAccountUsage).mockResolvedValue(okProvider('claude', 23))
++
++    service.evictInactiveClaudeCache('account-new')
++    await Promise.resolve()
++
++    expect(fetchManagedAccountUsage).not.toHaveBeenCalled()
++  })
+ })
+diff --git a/src/main/rate-limits/service-live-claude-usage.test.ts b/src/main/rate-limits/service-live-claude-usage.test.ts
+index 3c51a09aa5ff8aea8f3d3d07d25d017dcfcff79b..d444dd8eb24826d607765412ea4b026ccf67398d 100644
+--- a/src/main/rate-limits/service-live-claude-usage.test.ts
++++ b/src/main/rate-limits/service-live-claude-usage.test.ts
+@@ -3,6 +3,7 @@ import type { ProviderRateLimits } from '../../shared/rate-limit-types'
+ import { RateLimitService } from './service'
+ import { fetchClaudeRateLimits } from './claude-fetcher'
+ import { fetchCodexRateLimits } from './codex-fetcher'
++import { fetchGrokRateLimits } from './grok-fetcher'
+ import {
+   asRateLimitWindow,
+   deferred,
+@@ -44,6 +45,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+@@ -516,4 +522,113 @@ describe('RateLimitService', () => {
+       expect(fetchClaudeRateLimits).not.toHaveBeenCalled()
+     })
+   })
++
++  describe('retained sample when a refresh fails', () => {
++    function claudeSample(usedPercent: number, provenance: string, updatedAt: number) {
++      return {
++        ...okProvider('claude', usedPercent, updatedAt),
++        usageMetadata: { source: 'oauth' as const, authProvenance: provenance }
++      }
++    }
++
++    it('keeps the last good numbers under the error, still dated by the successful read', async () => {
++      const service = new RateLimitService()
++      const readAt = Date.now() - 60_000
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce(
++        claudeSample(42, 'managed:account-1', readAt)
++      )
++      await service.refresh()
++
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce({
++        ...errorProvider('claude', 'Claude usage read failed'),
++        usageMetadata: { failureKind: 'network', authProvenance: 'managed:account-1' }
++      })
++      await service.refresh()
++
++      const claude = service.getState().claude
++      expect(claude?.status).toBe('error')
++      expect(claude?.error).toBe('Claude usage read failed')
++      expect(claude?.session?.usedPercent).toBe(42)
++      // Why: the row dates the numbers it is showing, not the attempt that failed.
++      expect(claude?.updatedAt).toBe(readAt)
++    })
++
++    it('drops a sample read under another account rather than relabelling it', async () => {
++      const service = new RateLimitService()
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce(
++        claudeSample(42, 'managed:account-1', Date.now())
++      )
++      await service.refresh()
++
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce({
++        ...errorProvider('claude', 'Claude usage read failed'),
++        usageMetadata: { failureKind: 'network', authProvenance: 'managed:account-2' }
++      })
++      await service.refresh()
++
++      const claude = service.getState().claude
++      expect(claude?.status).toBe('error')
++      // account-2 has never returned data; showing account-1's quota under its
++      // name is the cross-account leak per-account isolation exists to remove.
++      expect(claude?.session).toBeNull()
++    })
++
++    it('drops the retained sample when the failing read cannot name its account', async () => {
++      const service = new RateLimitService()
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce(
++        claudeSample(42, 'managed:account-1', Date.now())
++      )
++      await service.refresh()
++
++      // The CLI/PTY lane used to resolve failures with no usageMetadata at all;
++      // an unattributable read must not inherit account-1's quota.
++      vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce(
++        errorProvider('claude', 'Claude usage read failed')
++      )
++      await service.refresh()
++
++      const claude = service.getState().claude
++      expect(claude?.status).toBe('error')
++      expect(claude?.session).toBeNull()
++    })
++
++    it('keeps a provider whose failures never carry a surface name', async () => {
++      const service = new RateLimitService()
++      vi.mocked(fetchGrokRateLimits).mockResolvedValueOnce({
++        ...okProvider('grok', 31),
++        usageMetadata: { source: 'oauth' as const, authProvenance: 'flo@example.com (SuperGrok)' }
++      })
++      await service.refresh()
++
++      vi.mocked(fetchGrokRateLimits).mockResolvedValueOnce(
++        errorProvider('grok', 'Grok read failed')
++      )
++      await service.refresh()
++
++      const grok = service.getState().grok
++      expect(grok?.status).toBe('error')
++      // Grok has one identity and labels only its successful reads; the Claude
++      // cross-account rule must not empty its bar on a transient failure.
++      expect(grok?.session?.usedPercent).toBe(31)
++    })
++
++    it('still drops a non-Claude sample when both reads name different identities', async () => {
++      const service = new RateLimitService()
++      vi.mocked(fetchGrokRateLimits).mockResolvedValueOnce({
++        ...okProvider('grok', 31),
++        usageMetadata: { source: 'oauth' as const, authProvenance: 'flo@example.com (SuperGrok)' }
++      })
++      await service.refresh()
++
++      vi.mocked(fetchGrokRateLimits).mockResolvedValueOnce({
++        ...errorProvider('grok', 'Grok read failed'),
++        usageMetadata: { authProvenance: 'other@example.com (SuperGrok)' }
++      })
++      await service.refresh()
++
++      const grok = service.getState().grok
++      expect(grok?.status).toBe('error')
++      expect(grok?.session).toBeNull()
++    })
++  })
+ })
+diff --git a/src/main/rate-limits/service-minimax-usage.test.ts b/src/main/rate-limits/service-minimax-usage.test.ts
+index 8b2253364723996fa22baef2c88d449a16c59e1d..ae008aa8f62a9f006a1cfd2c985803a822ab9b63 100644
+--- a/src/main/rate-limits/service-minimax-usage.test.ts
++++ b/src/main/rate-limits/service-minimax-usage.test.ts
+@@ -41,6 +41,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service-refresh-orchestration.test.ts b/src/main/rate-limits/service-refresh-orchestration.test.ts
+index b184d51eda6a54fc462cc3b2c823e2d4bcf27c6b..638507c0546702176040ed4109089ddb7d2231b9 100644
+--- a/src/main/rate-limits/service-refresh-orchestration.test.ts
++++ b/src/main/rate-limits/service-refresh-orchestration.test.ts
+@@ -48,6 +48,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service-window-activation.test.ts b/src/main/rate-limits/service-window-activation.test.ts
+index 7c83bd7d026005b3db02d553d2e8c48ce1faeb92..108922f8cb1aa569052f72b60991a8302eb3ee6e 100644
+--- a/src/main/rate-limits/service-window-activation.test.ts
++++ b/src/main/rate-limits/service-window-activation.test.ts
+@@ -49,6 +49,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service/service-account-refresh.ts b/src/main/rate-limits/service/service-account-refresh.ts
+index ed8578e369404f588b6ab2f43831dd7bb5f3ecd1..00cacfcb3c7a7a5a0cab5b29cff862ccb5b2125a 100644
+--- a/src/main/rate-limits/service/service-account-refresh.ts
++++ b/src/main/rate-limits/service/service-account-refresh.ts
+@@ -29,6 +29,15 @@ export abstract class RateLimitServiceAccountRefresh extends RateLimitServiceIna
+     return this.getState()
+   }
+ 
++  async refreshCodexBar(): Promise<RateLimitState> {
++    // Why: one CodexBar batch covers Qwen Cloud. Until a dedicated queue
++    // exists, a forced full cycle is the same batch plus the other
++    // providers — still one user click, still one CLI round-trip because
++    // the full cycle already overlaps it.
++    await this.fetchAll({ force: true })
++    return this.getState()
++  }
++
+   invalidateMiniMaxCredentialState(): void {
+     this.minimaxFetchGeneration += 1
+     // Why: saving/forgetting the cookie can race an in-flight fetch; clear the visible snapshot before any old-cookie result returns.
+diff --git a/src/main/rate-limits/service/service-configuration.ts b/src/main/rate-limits/service/service-configuration.ts
+index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17bba106bc2 100644
+--- a/src/main/rate-limits/service/service-configuration.ts
++++ b/src/main/rate-limits/service/service-configuration.ts
+@@ -13,6 +13,8 @@ import {
+   type GeminiCliOAuthEnabledResolver,
+   type InactiveCodexAccountInfo,
+   type InactiveClaudeAccountInfo,
++  type ManagedAccountContextResolver,
++  type NormalizedCodexAccountSelectionTarget,
+   type RateLimitState,
+   normalizeCodexAccountSelectionTarget,
+   normalizeClaudeAccountSelectionTarget,
+@@ -61,11 +63,17 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+     this.inactiveClaudeAccountsGeneration += 1
+   }
+ 
+-  setInactiveCodexAccountsResolver(resolver: () => InactiveCodexAccountInfo[]): void {
++  setInactiveCodexAccountsResolver(
++    resolver: (target: NormalizedCodexAccountSelectionTarget) => InactiveCodexAccountInfo[]
++  ): void {
+     this.inactiveCodexAccountsResolver = resolver
+     this.inactiveCodexAccountsGeneration += 1
+     this.pruneInactiveCodexState()
+   }
++
++  setManagedAccountContextResolver(resolver: ManagedAccountContextResolver): void {
++    this.managedAccountContextResolver = resolver
++  }
+   attach(mainWindow: BrowserWindow): void {
+     this.detachWindowListeners?.()
+     this.mainWindow = mainWindow
+@@ -96,6 +104,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+   }
+ 
+   start(options: { fetchImmediately?: boolean } = {}): void {
++    this.stopped = false
+     if (options.fetchImmediately !== false) {
+       void this.fetchAll()
+     } else {
+@@ -105,6 +114,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+   }
+ 
+   stop(): void {
++    this.stopped = true
+     this.abortActiveFetchCycle()
+     this.clearQueuedFetches()
+     this.inactiveClaudeFetching.clear()
+@@ -127,9 +137,16 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+       minimaxApiKeyConfigured: hasMiniMaxApiKey(),
+       opencodeGoApiKeyConfigured: this.openCodeGoApiKeyConfigured,
+       grokAuthConfigured: this.grokAuthConfigured,
++      // Why: absence of the CodexBar binary is the single reason the Qwen Cloud meter can't
++      // report; the renderer treats it as "unconfigured", not as a failure.
++      codexbarAvailable: this.codexbarAvailable,
+       cursorAuthConfigured: this.cursorAuthConfigured,
+       claudeTarget: this.claudeFetchTarget,
+       codexTarget: this.codexFetchTarget,
++      ...this.managedAccountContextResolver?.({
++        claude: this.claudeFetchTarget,
++        codex: this.codexFetchTarget
++      }),
+       inactiveClaudeAccounts: this.buildInactiveArray(
+         this.inactiveClaudeCache,
+         this.inactiveClaudeFetching
+diff --git a/src/main/rate-limits/service/service-fetch-queue.ts b/src/main/rate-limits/service/service-fetch-queue.ts
+index 49531ee3fb16fd56aae11587d698f76ce40b401e..d6c55c7cb2f792b9e58fe3ce5c8fdcf07f09fe2a 100644
+--- a/src/main/rate-limits/service/service-fetch-queue.ts
++++ b/src/main/rate-limits/service/service-fetch-queue.ts
+@@ -10,6 +10,7 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+       return
+     }
+     this.isFetching = true
++    let cycleAborted = false
+ 
+     try {
+       let shouldContinue = true
+@@ -22,6 +23,7 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+         shouldContinue = false
+         cycleForce = true
+         if (signal.aborted) {
++          cycleAborted = true
+           break
+         }
+         if (this.fullFetchQueued) {
+@@ -35,6 +37,7 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+             this.runFetchCodexOnlyCycle(fetchSignal)
+           )
+           if (codexSignal.aborted) {
++            cycleAborted = true
+             break
+           }
+         }
+@@ -44,6 +47,7 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+             this.runFetchClaudeOnlyCycle(fetchSignal, { force: true })
+           )
+           if (claudeSignal.aborted) {
++            cycleAborted = true
+             break
+           }
+         }
+@@ -53,6 +57,7 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+             this.runFetchGrokOnlyCycle(fetchSignal)
+           )
+           if (grokSignal.aborted) {
++            cycleAborted = true
+             break
+           }
+         }
+@@ -61,8 +66,11 @@ export abstract class RateLimitServiceFetchQueue extends RateLimitServiceProvide
+       this.isFetching = false
+       this.resolveFetchIdleWaiters()
+     }
++    this.afterActiveFetchAll(cycleAborted)
+   }
+ 
++  protected afterActiveFetchAll(_cycleAborted: boolean): void {}
++
+   protected async fetchCodexOnly(options?: { force?: boolean }): Promise<void> {
+     if (this.isFetching) {
+       if (options?.force) {
+diff --git a/src/main/rate-limits/service/service-full-cycle-application.ts b/src/main/rate-limits/service/service-full-cycle-application.ts
+index 9e9d9506a0519d602148b5585364e6dfbbeb1c0a..508f8406895de3a2615982d1926034685a3c3a38 100644
+--- a/src/main/rate-limits/service/service-full-cycle-application.ts
++++ b/src/main/rate-limits/service/service-full-cycle-application.ts
+@@ -36,7 +36,8 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
+         miniMaxResult
+       ],
+       grokResultPromise,
+-      cursorResultPromise
++      cursorResultPromise,
++      codexBarSnapshotPromise
+     } = prepared
+     if (signal.aborted) {
+       return
+@@ -52,7 +53,10 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
+             updatedAt: Date.now(),
+             error:
+               claudeResult.reason instanceof Error ? claudeResult.reason.message : 'Unknown error',
+-            status: 'error'
++            status: 'error',
++            // Why: a lane that crashed still ran against this account; without
++            // the name, retention treats its own numbers as a stranger's.
++            usageMetadata: { authProvenance: claudeProvenance }
+           } satisfies ProviderRateLimits)
+ 
+     const codex =
+@@ -217,5 +221,11 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
+       grok: this.applyStalePolicy(grok, previousState.grok),
+       cursor: cursorAccountChanged ? cursor : this.applyStalePolicy(cursor, previousState.cursor)
+     })
++
++    const codexBarSnapshot = await codexBarSnapshotPromise
++    if (signal.aborted) {
++      return
++    }
++    this.applyCodexBarSnapshot(codexBarSnapshot, previousState)
+   }
+ }
+diff --git a/src/main/rate-limits/service/service-full-cycle-preparation.ts b/src/main/rate-limits/service/service-full-cycle-preparation.ts
+index df36011ab31242a673c5639d389177412fa33482..e92c5bf3ef7a4f00281640eea99857c3102ab75f 100644
+--- a/src/main/rate-limits/service/service-full-cycle-preparation.ts
++++ b/src/main/rate-limits/service/service-full-cycle-preparation.ts
+@@ -8,6 +8,7 @@ import { readCursorAuthSession } from '../cursor-auth'
+ import { fetchMiniMaxRateLimits } from '../minimax/minimax-fetcher'
+ import { createHash } from 'node:crypto'
+ import { fetchOpenCodeGoUsage } from '../opencode-go-usage-source-selection'
++import { fetchCodexBarUsage, type CodexBarUsageSnapshot } from '../codexbar-cli-source'
+ import { RateLimitServiceFetchPolicy } from './service-fetch-policy'
+ import type { SettledProviderResult } from './service-sibling-provider-result'
+ import type {
+@@ -44,6 +45,9 @@ export type FetchAllCyclePrepared = {
+   ]
+   grokResultPromise: Promise<SettledProviderResult>
+   cursorResultPromise: Promise<SettledProviderResult>
++  // Why: one batch reads every CodexBar provider in parallel; started here so its CLI
++  // round trips overlap the HTTP fetches instead of adding to the cycle's latency.
++  codexBarSnapshotPromise: Promise<CodexBarUsageSnapshot>
+ }
+ 
+ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServiceFetchPolicy {
+@@ -130,7 +134,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
+         ? this.withFetchingStatus(null, 'minimax')
+         : this.withFetchingStatus(previousState.minimax, 'minimax'),
+       grok: this.withFetchingStatus(previousState.grok, 'grok'),
+-      cursor: this.withFetchingStatus(previousState.cursor, 'cursor')
++      cursor: this.withFetchingStatus(previousState.cursor, 'cursor'),
++      ...this.withCodexBarFetchingStatus(previousState)
+     })
+ 
+     // Why: the Cursor probe reads the macOS Keychain, so it is awaited inside the
+@@ -154,6 +159,10 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
+       (value) => ({ status: 'fulfilled', value }) as const,
+       (reason) => ({ status: 'rejected', reason }) as const
+     )
++    const codexBarSnapshotPromise = fetchCodexBarUsage({ signal }).catch(() => ({
++      binaryPath: null,
++      results: {}
++    }))
+ 
+     // Why: skip automated Claude fetches while a Retry-After window is open or a live session feed is fresher than the OAuth poll would be.
+     const claudeFetchGated =
+@@ -231,7 +240,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
+         miniMaxResult
+       ],
+       grokResultPromise,
+-      cursorResultPromise
++      cursorResultPromise,
++      codexBarSnapshotPromise
+     }
+   }
+ }
+diff --git a/src/main/rate-limits/service/service-inactive-accounts.ts b/src/main/rate-limits/service/service-inactive-accounts.ts
+index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b03348f69691 100644
+--- a/src/main/rate-limits/service/service-inactive-accounts.ts
++++ b/src/main/rate-limits/service/service-inactive-accounts.ts
+@@ -4,7 +4,9 @@ import { RateLimitServicePolling } from './service-polling'
+ import {
+   INACTIVE_CODEX_PROBE_STAGGER_MS,
+   INACTIVE_FETCH_DEBOUNCE_MS,
+-  delayUnlessAborted
++  delayUnlessAborted,
++  toErrorMessage,
++  type ProviderRateLimits
+ } from './service-types'
+ 
+ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServicePolling {
+@@ -63,14 +65,18 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+           }
+           const cached = this.inactiveClaudeCache.get(account.id) ?? null
+           this.inactiveClaudeCache.set(account.id, this.applyStalePolicy(fresh, cached))
+-        } catch {
+-          // Why: per-account try/catch keeps one Keychain/network error from aborting the remaining accounts in the batch.
++        } catch (error) {
++          // Why: per-account failures expire through the same stale policy as active meters.
+           if (
+             signal.aborted ||
+             fetchGeneration !== this.inactiveClaudeAccountsGeneration ||
+             !this.isCurrentInactiveClaudeAccount(account.id)
+           ) {
+             this.inactiveClaudeCache.delete(account.id)
++          } else {
++            this.cacheInactiveFailure(this.inactiveClaudeCache, account.id, 'claude', error, {
++              authProvenance: `managed:${account.id}`
++            })
+           }
+         }
+         this.inactiveClaudeFetching.delete(account.id)
+@@ -93,7 +99,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+     if (this.inactiveCodexFetchInFlight) {
+       return
+     }
+-    const accounts = this.inactiveCodexAccountsResolver?.() ?? []
++    const accounts = this.inactiveCodexAccountsResolver?.(this.codexFetchTarget) ?? []
+     if (accounts.length === 0) {
+       return
+     }
+@@ -163,14 +169,16 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+           }
+           const cached = this.inactiveCodexCache.get(account.id) ?? null
+           this.inactiveCodexCache.set(account.id, this.applyStalePolicy(fresh, cached))
+-        } catch {
+-          // Why: per-account try/catch prevents one failure from aborting the batch.
++        } catch (error) {
++          // Why: per-account failures expire through the same stale policy as active meters.
+           if (
+             signal.aborted ||
+             fetchGeneration !== this.inactiveCodexAccountsGeneration ||
+             !this.isCurrentInactiveCodexAccount(account.id)
+           ) {
+             this.inactiveCodexCache.delete(account.id)
++          } else {
++            this.cacheInactiveFailure(this.inactiveCodexCache, account.id, 'codex', error)
+           }
+         }
+         this.inactiveCodexFetching.delete(account.id)
+@@ -191,6 +199,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+     this.inactiveClaudeCache.delete(accountId)
+     this.inactiveClaudeFetching.delete(accountId)
+     this.pushToRenderer()
++    this.refetchInactiveLanesAfterRosterChange('claude')
+   }
+ 
+   protected isCurrentInactiveClaudeAccount(accountId: string): boolean {
+@@ -200,7 +209,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+   }
+ 
+   protected isCurrentInactiveCodexAccount(accountId: string): boolean {
+-    return (this.inactiveCodexAccountsResolver?.() ?? []).some(
++    return (this.inactiveCodexAccountsResolver?.(this.codexFetchTarget) ?? []).some(
+       (account) => account.id === accountId
+     )
+   }
+@@ -223,7 +232,9 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+ 
+   protected pruneInactiveCodexState(): void {
+     const currentIds = new Set(
+-      (this.inactiveCodexAccountsResolver?.() ?? []).map((account) => account.id)
++      (this.inactiveCodexAccountsResolver?.(this.codexFetchTarget) ?? []).map(
++        (account) => account.id
++      )
+     )
+     for (const accountId of this.inactiveCodexCache.keys()) {
+       if (!currentIds.has(accountId)) {
+@@ -242,5 +253,53 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+     this.inactiveCodexCache.delete(accountId)
+     this.inactiveCodexFetching.delete(accountId)
+     this.pushToRenderer()
++    this.refetchInactiveLanesAfterRosterChange('codex')
++  }
++
++  protected afterActiveFetchAll(cycleAborted: boolean): void {
++    if (cycleAborted || this.stopped || this.managedAccountContextResolver === null) {
++      return
++    }
++    void this.fetchInactiveClaudeAccountsOnOpen().catch(() => {})
++    void this.fetchInactiveCodexAccountsOnOpen().catch(() => {})
++  }
++
++  private refetchInactiveLanesAfterRosterChange(provider: 'claude' | 'codex'): void {
++    if (this.stopped || this.managedAccountContextResolver === null) {
++      return
++    }
++    if (provider === 'claude') {
++      this.lastInactiveClaudeFetchAt = 0
++      void this.fetchInactiveClaudeAccountsOnOpen().catch(() => {})
++      return
++    }
++    this.lastInactiveCodexFetchAt = 0
++    void this.fetchInactiveCodexAccountsOnOpen().catch(() => {})
++  }
++  private cacheInactiveFailure(
++    cache: Map<string, ProviderRateLimits>,
++    accountId: string,
++    provider: ProviderRateLimits['provider'],
++    error: unknown,
++    // Why: the failure belongs to the account this lane was fetching, and the
++    // stale policy drops a retained sample whose surface the new result cannot
++    // name — an unnamed failure would empty that account's own cached numbers.
++    usageMetadata?: ProviderRateLimits['usageMetadata']
++  ): void {
++    cache.set(
++      accountId,
++      this.applyStalePolicy(
++        {
++          provider,
++          session: null,
++          weekly: null,
++          updatedAt: Date.now(),
++          error: toErrorMessage(error),
++          status: 'error',
++          ...(usageMetadata ? { usageMetadata } : {})
++        },
++        cache.get(accountId) ?? null
++      )
++    )
+   }
+ }
+diff --git a/src/main/rate-limits/service/service-polling.ts b/src/main/rate-limits/service/service-polling.ts
+index e49c003cbb1d80d35ef6d2a543feb2702bd8a940..7d1010e93ac3731fd34600d2159aa89b901acd5c 100644
+--- a/src/main/rate-limits/service/service-polling.ts
++++ b/src/main/rate-limits/service/service-polling.ts
+@@ -79,12 +79,15 @@ export abstract class RateLimitServicePolling extends RateLimitServiceFetchQueue
+       minimax: this.state.minimax,
+       grok: this.state.grok,
+       antigravity: this.state.antigravity,
+-      cursor: this.state.cursor
+-    }
+-    return Object.entries(byProvider).map(([provider, limits]) => ({
+-      provider: provider as ActiveRateLimitProvider,
+-      limits
+-    }))
++      cursor: this.state.cursor,
++      qwencloud: this.state.qwencloud
++    }
++    return Object.entries(byProvider)
++      .map(([provider, limits]) => ({
++        provider: provider as ActiveRateLimitProvider,
++        limits
++      }))
++      .filter(({ provider }) => this.codexbarAvailable || provider !== 'qwencloud')
+   }
+ 
+   protected getActiveWindowRefreshPlan(now: number): ActiveWindowRefreshPlan {
+diff --git a/src/main/rate-limits/service/service-provider-cycles.ts b/src/main/rate-limits/service/service-provider-cycles.ts
+index 75c56d96e6728c68a8c9ab52049ab0a81c3bb8f4..243e82559c70130eea41da904dcb4e4d71e3cd51 100644
+--- a/src/main/rate-limits/service/service-provider-cycles.ts
++++ b/src/main/rate-limits/service/service-provider-cycles.ts
+@@ -117,7 +117,10 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
+       weekly: null,
+       updatedAt: Date.now(),
+       error: err instanceof Error ? err.message : 'Unknown error',
+-      status: 'error'
++      status: 'error',
++      // Why: a lane that crashed still ran against this account; without the
++      // name, retention treats the account's own numbers as a stranger's.
++      usageMetadata: { authProvenance: claudeProvenance }
+     }))
+ 
+     if (signal.aborted) {
+diff --git a/src/main/rate-limits/service/service-result-policy.ts b/src/main/rate-limits/service/service-result-policy.ts
+index 75f032159fab22d739bb044df708ddbbc1e53e0e..c64726a89f2016ac7acaf2ca2ed871ce1273434e 100644
+--- a/src/main/rate-limits/service/service-result-policy.ts
++++ b/src/main/rate-limits/service/service-result-policy.ts
+@@ -4,8 +4,20 @@ import {
+   RATE_LIMITED_STALE_THRESHOLD_MS,
+   STALE_THRESHOLD_MS,
+   type ActiveRateLimitProvider,
++  type InternalRateLimitState,
+   type ProviderRateLimits
+ } from './service-types'
++import type { CodexBarUsageSnapshot } from '../codexbar-cli-source'
++import type { CodexBarProvider } from '../codexbar-usage-mapper'
++
++// Why: the Claude auth lanes name the surface every read ran against —
++// 'system' for the user's own ~/.claude, 'managed:<account id>' for an isolated
++// account — and they name it on success, error and abort alike. Providers that
++// label only their successful reads (Grok's account/tier string) must keep
++// their retention, so identity is only enforced where silence is evidence.
++function isClaudeSurfaceProvenance(provenance: string | undefined): boolean {
++  return provenance === 'system' || provenance?.startsWith('managed:') === true
++}
+ 
+ export abstract class RateLimitServiceResultPolicy extends RateLimitServiceFetchControl {
+   protected applyStalePolicy(
+@@ -42,6 +54,25 @@ export abstract class RateLimitServiceResultPolicy extends RateLimitServiceFetch
+       return fresh
+     }
+ 
++    // Why: the retained numbers keep the failing lane's own name and reset
++    // times on screen. A sample read under another account is not this
++    // account's quota, so it is discarded rather than relabelled — an account
++    // that has never returned data must look empty, not borrow its neighbour's.
++    // Two named surfaces that disagree are always a mismatch, whatever the
++    // provider. An unstamped result additionally fails closed against a named
++    // Claude surface: it cannot prove it read the same account, and retention
++    // would relabel A's quota as B's.
++    const previousProvenance = previous.usageMetadata?.authProvenance
++    const freshProvenance = fresh.usageMetadata?.authProvenance
++    if (
++      previousProvenance !== freshProvenance &&
++      ((previousProvenance && freshProvenance) ||
++        isClaudeSurfaceProvenance(previousProvenance) ||
++        isClaudeSurfaceProvenance(freshProvenance))
++    ) {
++      return fresh
++    }
++
+     // Previous data is too old — don't show stale data
+     const staleThresholdMs =
+       fresh.usageMetadata?.failureKind === 'rate-limited'
+@@ -101,4 +132,38 @@ export abstract class RateLimitServiceResultPolicy extends RateLimitServiceFetch
+     }
+     return { ...current, status: 'fetching' }
+   }
++
++  // Why: mark fetching only once the binary is known present, else hosts without CodexBar get
++  // a chip that never settles.
++  protected withCodexBarFetchingStatus(
++    previous: InternalRateLimitState
++  ): Pick<InternalRateLimitState, 'qwencloud'> {
++    if (!this.codexbarAvailable) {
++      return { qwencloud: previous.qwencloud }
++    }
++    return { qwencloud: this.withFetchingStatus(previous.qwencloud, 'qwencloud') }
++  }
++
++  protected applyCodexBarSnapshot(
++    snapshot: CodexBarUsageSnapshot,
++    previousState: InternalRateLimitState
++  ): void {
++    this.codexbarAvailable = snapshot.binaryPath !== null
++    const apply = (
++      provider: CodexBarProvider,
++      previous: ProviderRateLimits | null
++    ): ProviderRateLimits | null => {
++      const fresh = snapshot.results[provider]?.limits
++      // Why: no binary means CodexBar was never installed; an error row would invent a failure.
++      if (!fresh) {
++        return null
++      }
++      this.trackActiveFailureStreak(provider, fresh)
++      return this.applyStalePolicy(fresh, previous)
++    }
++    this.updateState({
++      ...this.state,
++      qwencloud: apply('qwencloud', previousState.qwencloud)
++    })
++  }
+ }
+diff --git a/src/main/rate-limits/service/service-state.ts b/src/main/rate-limits/service/service-state.ts
+index a10bfa3f3c00592fe1eb51d7c0663aa8b134f9c9..41c5bfeb253b27c8a65837bf6c2cd021b3199070 100644
+--- a/src/main/rate-limits/service/service-state.ts
++++ b/src/main/rate-limits/service/service-state.ts
+@@ -14,6 +14,7 @@ import {
+   type OpenCodeGoRateLimitConfig,
+   type MiniMaxRateLimitConfig,
+   type GeminiCliOAuthEnabledResolver,
++  type ManagedAccountContextResolver,
+   type NormalizedCodexAccountSelectionTarget,
+   type NormalizedClaudeAccountSelectionTarget,
+   type InactiveClaudeAccountInfo,
+@@ -32,9 +33,13 @@ export abstract class RateLimitServiceState {
+     antigravity: null,
+     minimax: null,
+     grok: null,
+-    cursor: null
++    cursor: null,
++    qwencloud: null
+   }
+   protected grokAuthConfigured = readGrokAuthSession().status === 'ok'
++  // Why: probing the binary is async (PATH lookup), so it can only be known from the first fetch
++  // cycle onward; false keeps the CodexBar-backed Qwen Cloud meter off the bar until then.
++  protected codexbarAvailable = false
+   // Why: the Cursor probe reads the macOS Keychain, so it cannot run synchronously
+   // at construction the way Grok's auth-file probe does; each fetch cycle sets it.
+   protected cursorAuthConfigured = false
+@@ -52,7 +57,8 @@ export abstract class RateLimitServiceState {
+     minimax: 0,
+     grok: 0,
+     antigravity: 0,
+-    cursor: 0
++    cursor: 0,
++    qwencloud: 0
+   }
+   // Why: consecutive failures drive exponential backoff of the fast activation-retry lane; reset on any success/unavailable result.
+   protected activeFailureStreakByProvider: Record<ActiveRateLimitProvider, number> = {
+@@ -64,11 +70,13 @@ export abstract class RateLimitServiceState {
+     minimax: 0,
+     grok: 0,
+     antigravity: 0,
+-    cursor: 0
++    cursor: 0,
++    qwencloud: 0
+   }
+   protected mainWindow: BrowserWindow | null = null
+   protected detachWindowListeners: (() => void) | null = null
+   protected isFetching = false
++  protected stopped = false
+   protected fullFetchQueued = false
+   protected codexOnlyFetchQueued = false
+   protected claudeOnlyFetchQueued = false
+@@ -99,8 +107,11 @@ export abstract class RateLimitServiceState {
+   protected miniMaxConfigResolver: (() => MiniMaxRateLimitConfig) | null = null
+   protected geminiCliOAuthEnabledResolver: GeminiCliOAuthEnabledResolver | null = null
+   protected inactiveClaudeAccountsResolver: (() => InactiveClaudeAccountInfo[]) | null = null
+-  protected inactiveCodexAccountsResolver: (() => InactiveCodexAccountInfo[]) | null = null
++  protected inactiveCodexAccountsResolver:
++    | ((target: NormalizedCodexAccountSelectionTarget) => InactiveCodexAccountInfo[])
++    | null = null
+   protected networkProxySettingsResolver: (() => NetworkProxySettings) | null = null
++  protected managedAccountContextResolver: ManagedAccountContextResolver | null = null
+   protected inactiveClaudeCache = new Map<string, ProviderRateLimits>()
+   protected inactiveCodexCache = new Map<string, ProviderRateLimits>()
+   protected inactiveClaudeFetching = new Set<string>()
+diff --git a/src/main/rate-limits/service/service-types.ts b/src/main/rate-limits/service/service-types.ts
+index 9783f37f77df34378bf0c9cb251ce57da1494968..737a31ba36061b2489a851da64f56d55f349983d 100644
+--- a/src/main/rate-limits/service/service-types.ts
++++ b/src/main/rate-limits/service/service-types.ts
+@@ -1,8 +1,17 @@
+-import type { ProviderRateLimits } from '../../../shared/rate-limit-types'
++import type {
++  ProviderRateLimits,
++  SystemDefaultLaneDescriptor
++} from '../../../shared/rate-limit-types'
+ import type { ClaudeRuntimeAuthPreparation } from '../../claude-accounts/runtime-auth-service'
+-import type { ClaudeAccountSelectionTarget } from '../../claude-accounts/runtime-selection'
++import type {
++  ClaudeAccountSelectionTarget,
++  NormalizedClaudeAccountSelectionTarget
++} from '../../claude-accounts/runtime-selection'
+ import type { KimiHomeResolution } from '../../kimi/kimi-runtime-home'
+-import type { CodexAccountSelectionTarget } from '../../codex-accounts/runtime-selection'
++import type {
++  CodexAccountSelectionTarget,
++  NormalizedCodexAccountSelectionTarget
++} from '../../codex-accounts/runtime-selection'
+ import type { CodexRateLimitHomeResolution } from '../../codex-accounts/runtime-home-service'
+ 
+ export type {
+@@ -33,6 +42,18 @@ export type InactiveCodexAccountInfo = {
+   resolveHome: () => { kind: 'ready'; managedHomePath: string } | { kind: 'skip' }
+ }
+ 
++export type ManagedAccountContext = {
++  activeClaudeAccountId: string | null
++  activeCodexAccountId: string | null
++  claudeSystemDefault: SystemDefaultLaneDescriptor | null
++  codexSystemDefault: SystemDefaultLaneDescriptor | null
++}
++
++export type ManagedAccountContextResolver = (targets: {
++  claude: NormalizedClaudeAccountSelectionTarget
++  codex: NormalizedCodexAccountSelectionTarget
++}) => ManagedAccountContext
++
+ export type CodexHomePathResolver = (
+   target?: CodexAccountSelectionTarget
+ ) => CodexRateLimitHomeResolution
+@@ -110,6 +131,7 @@ export type InternalRateLimitState = {
+   minimax: ProviderRateLimits | null
+   grok: ProviderRateLimits | null
+   cursor: ProviderRateLimits | null
++  qwencloud: ProviderRateLimits | null
+ }
+ 
+ export function normalizePollingInterval(ms: number): number {
+diff --git a/src/preload/api/agent-usage-api.ts b/src/preload/api/agent-usage-api.ts
+index f2e163312f6a9eba53adf695034976b976e34d28..2059492264582e42714a97a80348f92e2bef37ee 100644
+--- a/src/preload/api/agent-usage-api.ts
++++ b/src/preload/api/agent-usage-api.ts
+@@ -58,5 +58,7 @@ export type RateLimitsApi = {
+   fetchInactiveCodexAccounts: () => Promise<void>
+   refreshMiniMax: () => Promise<RateLimitState>
+   refreshGrok: () => Promise<RateLimitState>
++  /** One CodexBar CLI batch meters Qwen Cloud, so a single refresh covers every CodexBar meter. */
++  refreshCodexBar: () => Promise<RateLimitState>
+   onUpdate: (callback: (state: RateLimitState) => void) => () => void
+ }
+diff --git a/src/preload/api/rate-limits-bridge.ts b/src/preload/api/rate-limits-bridge.ts
+index 37af13f00060863fb6f436aa9fef9ad29aad8e97..bf58eb7e1585d91899105dd9306ead926bfdd351 100644
+--- a/src/preload/api/rate-limits-bridge.ts
++++ b/src/preload/api/rate-limits-bridge.ts
+@@ -23,6 +23,7 @@ export const rateLimitsApi = {
+     ipcRenderer.invoke('rateLimits:fetchInactiveCodexAccounts'),
+   refreshMiniMax: (): Promise<RateLimitState> => ipcRenderer.invoke('rateLimits:refreshMiniMax'),
+   refreshGrok: (): Promise<RateLimitState> => ipcRenderer.invoke('rateLimits:refreshGrok'),
++  refreshCodexBar: (): Promise<RateLimitState> => ipcRenderer.invoke('rateLimits:refreshCodexBar'),
+   onUpdate: (callback: (state: RateLimitState) => void): (() => void) => {
+     const listener = (_event: Electron.IpcRendererEvent, state: RateLimitState) => callback(state)
+     ipcRenderer.on('rateLimits:update', listener)
+diff --git a/src/renderer/src/store/slices/rate-limits.ts b/src/renderer/src/store/slices/rate-limits.ts
+index 9a6d41b701d9df41f7c88766678adfeb6a1a82c8..96f6bafd6f82effe5b690aa6028615b911736363 100644
+--- a/src/renderer/src/store/slices/rate-limits.ts
++++ b/src/renderer/src/store/slices/rate-limits.ts
+@@ -8,6 +8,7 @@ export type RateLimitSlice = {
+   fetchRateLimits: () => Promise<void>
+   refreshRateLimits: () => Promise<void>
+   refreshGrokRateLimits: () => Promise<void>
++  refreshCodexBar: () => Promise<void>
+   refreshClaudeRateLimitsForTarget: (target: RateLimitRuntimeTarget) => Promise<void>
+   refreshCodexRateLimitsForTarget: (target: RateLimitRuntimeTarget) => Promise<void>
+   consumeCodexRateLimitResetCredit: () => Promise<void>
+@@ -46,6 +47,15 @@ export const createRateLimitSlice: StateCreator<AppState, [], [], RateLimitSlice
+     }
+   },
+ 
++  refreshCodexBar: async () => {
++    try {
++      const state = await window.api.rateLimits.refreshCodexBar()
++      set({ rateLimits: state })
++    } catch (error) {
++      console.error('Failed to refresh CodexBar usage:', error)
++    }
++  },
++
+   refreshClaudeRateLimitsForTarget: async (target) => {
+     const current = get().rateLimits
+     const targetChanged =
+diff --git a/src/renderer/src/web/preload-api/web-rate-limits-api.ts b/src/renderer/src/web/preload-api/web-rate-limits-api.ts
+index d5fe7bc90809415ec141bec6be77cf795ab56647..03251c19973afcbc16713288152953bf30f0d997 100644
+--- a/src/renderer/src/web/preload-api/web-rate-limits-api.ts
++++ b/src/renderer/src/web/preload-api/web-rate-limits-api.ts
+@@ -16,6 +16,7 @@ export function createRateLimitsApi(): NonNullable<Partial<PreloadApi>['rateLimi
+     fetchInactiveCodexAccounts: () => Promise.resolve(),
+     refreshMiniMax: () => Promise.resolve(empty),
+     refreshGrok: () => Promise.resolve(empty),
++    refreshCodexBar: () => Promise.resolve(empty),
+     onUpdate: () => noopUnsubscribe
+   }
+ }
+diff --git a/src/shared/managed-account-usage-roster.test.ts b/src/shared/managed-account-usage-roster.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..09edabf55ac7a33c4b54a5622aeacaa2ff68d8d0
+--- /dev/null
++++ b/src/shared/managed-account-usage-roster.test.ts
+@@ -0,0 +1,189 @@
++import { describe, expect, it } from 'vitest'
++import {
++  SYSTEM_DEFAULT_ACCOUNT_ID,
++  buildManagedAccountUsageLanes,
++  isCoveredByManagedAccount,
++  type BuildManagedAccountUsageLanesArgs
++} from './managed-account-usage-roster'
++import type { InactiveAccountUsage, ProviderRateLimits } from './rate-limit-types'
++
++function limits(
++  usedPercent: number | null,
++  status: ProviderRateLimits['status'] = 'ok'
++): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session:
++      usedPercent === null
++        ? null
++        : { usedPercent, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: null,
++    status
++  }
++}
++
++function inactive(
++  accountId: string,
++  overrides: Partial<InactiveAccountUsage> = {}
++): InactiveAccountUsage {
++  return { accountId, rateLimits: null, updatedAt: 0, isFetching: false, ...overrides }
++}
++
++function args(
++  overrides: Partial<BuildManagedAccountUsageLanesArgs> = {}
++): BuildManagedAccountUsageLanesArgs {
++  return {
++    systemDefault: { email: 'system@example.com', measurableWhenInactive: true },
++    managedAccounts: [
++      { id: 'account-late', email: 'late@example.com', createdAt: 200 },
++      { id: 'account-early', email: 'early@example.com', createdAt: 100 }
++    ],
++    activeAccountId: 'account-early',
++    activeLimits: limits(42),
++    inactive: [],
++    ...overrides
++  }
++}
++
++describe('buildManagedAccountUsageLanes', () => {
++  // Why: the regression this builder exists for — before the first inactive fetch the cache is
++  // empty, and inferring "active" by absence reported the active account's usage on every lane.
++  it('leaves uncached lanes unmeasured instead of reusing the active account usage', () => {
++    const lanes = buildManagedAccountUsageLanes(args({ inactive: [] }))
++
++    expect(
++      lanes.map((lane) => [lane.accountId, lane.limits?.session?.usedPercent ?? null])
++    ).toEqual([
++      [null, null],
++      ['account-early', 42],
++      ['account-late', null]
++    ])
++    expect(lanes.filter((lane) => !lane.isActive).map((lane) => lane.unmeasuredReason)).toEqual([
++      'not-fetched',
++      'not-fetched'
++    ])
++  })
++
++  it('keeps the system-default lane and orders managed accounts by creation', () => {
++    const lanes = buildManagedAccountUsageLanes(args())
++
++    expect(lanes.map((lane) => [lane.ordinal, lane.kind, lane.accountId, lane.email])).toEqual([
++      [1, 'system-default', null, 'system@example.com'],
++      [2, 'managed', 'account-early', 'early@example.com'],
++      [3, 'managed', 'account-late', 'late@example.com']
++    ])
++  })
++
++  // Why: an absent/signed-out/API-key login has no usage window; a lane for it would be a
++  // phantom account. Email is not the presence signal — Claude's own default reports none.
++  it('omits the system-default lane when the provider has no such login', () => {
++    const lanes = buildManagedAccountUsageLanes(args({ systemDefault: null }))
++
++    expect(lanes.map((lane) => [lane.ordinal, lane.kind, lane.accountId])).toEqual([
++      [1, 'managed', 'account-early'],
++      [2, 'managed', 'account-late']
++    ])
++  })
++
++  it('keeps a present system default whose identity is unresolved', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({ systemDefault: { email: null, measurableWhenInactive: true } })
++    )
++
++    expect(lanes[0]).toMatchObject({ kind: 'system-default', email: null, ordinal: 1 })
++  })
++
++  // Why: ordinals are a user-facing label; switching accounts must not renumber the pills.
++  it('keeps ordinals stable when the active account changes', () => {
++    const before = buildManagedAccountUsageLanes(args({ activeAccountId: 'account-early' }))
++    const after = buildManagedAccountUsageLanes(args({ activeAccountId: 'account-late' }))
++
++    expect(after.map((lane) => [lane.ordinal, lane.accountId])).toEqual(
++      before.map((lane) => [lane.ordinal, lane.accountId])
++    )
++    expect(after.find((lane) => lane.isActive)?.accountId).toBe('account-late')
++  })
++
++  it('marks the system default active when no managed account is selected', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({ activeAccountId: null, activeLimits: limits(7) })
++    )
++
++    expect(lanes[0]).toMatchObject({ accountId: null, isActive: true, unmeasuredReason: null })
++    expect(lanes[0]?.limits?.session?.usedPercent).toBe(7)
++    expect(lanes.slice(1).every((lane) => lane.limits === null)).toBe(true)
++  })
++
++  it('reads an inactive lane from its own cached result', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({ inactive: [inactive('account-late', { rateLimits: limits(88) })] })
++    )
++
++    expect(lanes[2]).toMatchObject({ accountId: 'account-late', isActive: false })
++    expect(lanes[2]?.limits?.session?.usedPercent).toBe(88)
++    expect(lanes[2]?.unmeasuredReason).toBeNull()
++  })
++
++  it('distinguishes a pending fetch from a lane nothing has fetched', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({ inactive: [inactive('account-late', { isFetching: true })] })
++    )
++
++    expect(lanes[2]).toMatchObject({ isFetching: true, unmeasuredReason: 'pending' })
++    expect(lanes[0]).toMatchObject({ isFetching: false, unmeasuredReason: 'not-fetched' })
++  })
++
++  it('resolves the system-default lane through its sentinel id', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({ inactive: [inactive(SYSTEM_DEFAULT_ACCOUNT_ID, { rateLimits: limits(11) })] })
++    )
++
++    expect(lanes[0]?.limits?.session?.usedPercent).toBe(11)
++  })
++
++  it('ignores a cached result for a system default it cannot measure while inactive', () => {
++    const lanes = buildManagedAccountUsageLanes(
++      args({
++        systemDefault: { email: 'system@example.com', measurableWhenInactive: false },
++        inactive: [inactive(SYSTEM_DEFAULT_ACCOUNT_ID, { rateLimits: limits(11) })]
++      })
++    )
++
++    expect(lanes[0]).toMatchObject({ limits: null, unmeasuredReason: 'not-fetched' })
++  })
++
++  it('treats an active snapshot with no window as pending rather than measured', () => {
++    const lanes = buildManagedAccountUsageLanes(args({ activeLimits: limits(null, 'fetching') }))
++
++    expect(lanes[1]).toMatchObject({
++      isActive: true,
++      isFetching: true,
++      unmeasuredReason: 'pending'
++    })
++  })
++})
++
++describe('isCoveredByManagedAccount', () => {
++  // Why: signing the system-default identity in as a managed account leaves ~/.codex pointing
++  // at it too. Publishing both lanes metered one subscription twice and showed a third account
++  // the user never created.
++  it('matches a managed account with the same identity, case and space insensitively', () => {
++    expect(isCoveredByManagedAccount('Flo@Example.com ', [{ email: 'flo@example.com' }])).toBe(true)
++  })
++
++  it('does not match a different identity', () => {
++    expect(isCoveredByManagedAccount('a@example.com', [{ email: 'b@example.com' }])).toBe(false)
++  })
++
++  // Why: an unresolved identity cannot be proven to duplicate anything, so the lane stays.
++  it('treats an unresolved or blank identity as uncovered', () => {
++    expect(isCoveredByManagedAccount(null, [{ email: 'a@example.com' }])).toBe(false)
++    expect(isCoveredByManagedAccount('   ', [{ email: 'a@example.com' }])).toBe(false)
++  })
++
++  it('is false with no managed accounts', () => {
++    expect(isCoveredByManagedAccount('a@example.com', [])).toBe(false)
++  })
++})
+diff --git a/src/shared/managed-account-usage-roster.ts b/src/shared/managed-account-usage-roster.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0fdca4faf0fdd514571b5a1846b3e312273ee0ab
+--- /dev/null
++++ b/src/shared/managed-account-usage-roster.ts
+@@ -0,0 +1,164 @@
++import type {
++  InactiveAccountUsage,
++  ProviderRateLimits,
++  SystemDefaultLaneDescriptor
++} from './rate-limit-types'
++
++/** Sentinel id for the provider's own login (real ~/.claude / ~/.codex), which has no managed-account row. */
++export const SYSTEM_DEFAULT_ACCOUNT_ID = '__system-default__'
++
++export type ManagedAccountDescriptor = {
++  id: string
++  email: string
++  createdAt: number
++}
++
++/**
++ * True when a managed account already signs in the same identity as the provider's own login.
++ *
++ * Why it matters: signing an identity in as a managed account leaves the system default
++ * pointing at that same login, so publishing both lanes meters one subscription twice under
++ * two names — and the duplicate reads as a third account the user never created.
++ */
++export function isCoveredByManagedAccount(
++  systemDefaultEmail: string | null,
++  managedAccounts: readonly { email: string }[]
++): boolean {
++  const target = systemDefaultEmail?.trim().toLowerCase()
++  if (!target) {
++    return false
++  }
++  return managedAccounts.some((account) => account.email.trim().toLowerCase() === target)
++}
++
++/** Why a lane has no numbers, so the UI explains instead of rendering a blank meter. */
++export type UnmeasuredLaneReason =
++  /** A fetch is in flight and has not produced a window yet. */
++  | 'pending'
++  /** Nothing has fetched this lane; its usage is unknown, not zero. */
++  | 'not-fetched'
++
++export type ManagedAccountUsageLane = {
++  kind: 'system-default' | 'managed'
++  /** Managed account id, or null for the system-default login. */
++  accountId: string | null
++  /**
++   * 1-based label across the provider's present lanes, system default first.
++   * Stable while accounts are switched; a login appearing or disappearing renumbers.
++   */
++  ordinal: number
++  email: string | null
++  isActive: boolean
++  /** Null unless this lane has its own measurement — never a stand-in from another lane. */
++  limits: ProviderRateLimits | null
++  isFetching: boolean
++  unmeasuredReason: UnmeasuredLaneReason | null
++}
++
++export type BuildManagedAccountUsageLanesArgs = {
++  systemDefault: SystemDefaultLaneDescriptor | null
++  managedAccounts: readonly ManagedAccountDescriptor[]
++  /** Null selects the system default. */
++  activeAccountId: string | null
++  /** Usage for whichever lane is active; the service fetches exactly one active lane. */
++  activeLimits: ProviderRateLimits | null
++  inactive: readonly InactiveAccountUsage[]
++}
++
++/**
++ * Orders every account of one provider into display lanes.
++ *
++ * Why a builder rather than a render-time lookup: a lane with no cached result must stay
++ * visibly unmeasured. Deriving "active" by absence from the inactive array instead reports
++ * the active account's numbers on every lane before the first inactive fetch resolves.
++ */
++export function buildManagedAccountUsageLanes(
++  args: BuildManagedAccountUsageLanesArgs
++): ManagedAccountUsageLane[] {
++  const ordered = [...args.managedAccounts].sort(
++    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
++  )
++  const lanes: ManagedAccountUsageLane[] = []
++  if (args.systemDefault) {
++    lanes.push(
++      buildLane({
++        kind: 'system-default',
++        accountId: null,
++        email: args.systemDefault.email,
++        measurableWhenInactive: args.systemDefault.measurableWhenInactive,
++        ordinal: 1,
++        args
++      })
++    )
++  }
++  for (const account of ordered) {
++    lanes.push(
++      buildLane({
++        kind: 'managed',
++        accountId: account.id,
++        email: account.email,
++        measurableWhenInactive: true,
++        ordinal: lanes.length + 1,
++        args
++      })
++    )
++  }
++  return lanes
++}
++
++function buildLane(input: {
++  kind: ManagedAccountUsageLane['kind']
++  accountId: string | null
++  email: string | null
++  measurableWhenInactive: boolean
++  ordinal: number
++  args: BuildManagedAccountUsageLanesArgs
++}): ManagedAccountUsageLane {
++  const { kind, accountId, email, measurableWhenInactive, ordinal, args } = input
++  const isActive = accountId === args.activeAccountId
++  const base = { kind, accountId, ordinal, email, isActive }
++
++  if (isActive) {
++    const limits = args.activeLimits
++    return {
++      ...base,
++      limits,
++      isFetching: limits?.status === 'fetching',
++      unmeasuredReason: hasMeasurement(limits) ? null : limits ? 'pending' : 'not-fetched'
++    }
++  }
++
++  if (!measurableWhenInactive) {
++    return { ...base, limits: null, isFetching: false, unmeasuredReason: 'not-fetched' }
++  }
++
++  const entry = args.inactive.find(
++    (candidate) => candidate.accountId === (accountId ?? SYSTEM_DEFAULT_ACCOUNT_ID)
++  )
++  if (!entry) {
++    return { ...base, limits: null, isFetching: false, unmeasuredReason: 'not-fetched' }
++  }
++  return {
++    ...base,
++    limits: entry.rateLimits,
++    isFetching: entry.isFetching,
++    unmeasuredReason: hasMeasurement(entry.rateLimits)
++      ? null
++      : entry.isFetching
++        ? 'pending'
++        : 'not-fetched'
++  }
++}
++
++function hasMeasurement(limits: ProviderRateLimits | null): boolean {
++  if (!limits) {
++    return false
++  }
++  return Boolean(
++    limits.session ||
++    limits.weekly ||
++    limits.monthly ||
++    limits.fableWeekly ||
++    (limits.buckets?.length ?? 0) > 0
++  )
++}
+diff --git a/src/shared/rate-limit-state-factory.ts b/src/shared/rate-limit-state-factory.ts
+index 3dade988f0b9866f96f6ca1216d1c41459580651..8ba3a7b640e124b1722e59dc66dfed0d8a80b09a 100644
+--- a/src/shared/rate-limit-state-factory.ts
++++ b/src/shared/rate-limit-state-factory.ts
+@@ -12,10 +12,12 @@ export function createEmptyRateLimitState(overrides: Partial<RateLimitState> = {
+     minimax: null,
+     grok: null,
+     cursor: null,
++    qwencloud: null,
+     minimaxCookieConfigured: false,
+     minimaxApiKeyConfigured: false,
+     opencodeGoApiKeyConfigured: false,
+     grokAuthConfigured: false,
++    codexbarAvailable: false,
+     cursorAuthConfigured: false,
+     claudeTarget: { runtime: 'host', wslDistro: null },
+     codexTarget: { runtime: 'host', wslDistro: null },
+diff --git a/src/shared/rate-limit-types.test.ts b/src/shared/rate-limit-types.test.ts
+index b24e403857944842b2531e30a877710bdd858b76..fe1ca1b24ed306dedb98689e8399b985d3630f81 100644
+--- a/src/shared/rate-limit-types.test.ts
++++ b/src/shared/rate-limit-types.test.ts
+@@ -17,10 +17,12 @@ describe('RateLimitState', () => {
+       minimax: null,
+       grok: null,
+       cursor: null,
++      qwencloud: null,
+       minimaxCookieConfigured: false,
+       minimaxApiKeyConfigured: false,
+       opencodeGoApiKeyConfigured: false,
+       grokAuthConfigured: false,
++      codexbarAvailable: false,
+       cursorAuthConfigured: false,
+       claudeTarget: { runtime: 'host', wslDistro: null },
+       codexTarget: { runtime: 'host', wslDistro: null },
+diff --git a/src/shared/rate-limit-types.ts b/src/shared/rate-limit-types.ts
+index 48ff7c7abe35aa867bd2a6cba20da6780c2d288f..165b2e18f0ce29af4036269e4e78239bf38ada0f 100644
+--- a/src/shared/rate-limit-types.ts
++++ b/src/shared/rate-limit-types.ts
+@@ -58,6 +58,9 @@ export type ProviderRateLimits = {
+     | 'grok'
+     | 'antigravity'
+     | 'cursor'
++    // Metered through the CodexBar CLI rather than a native fetcher; see
++    // src/main/rate-limits/codexbar-cli-source.ts.
++    | 'qwencloud'
+   /** 5-hour session window, null if not available. */
+   session: RateLimitWindow | null
+   /** 7-day weekly window, null if not available. */
+@@ -117,6 +120,12 @@ export type GrokAccountStatus = {
+   tokenFresh: boolean
+   error: string | null
+ }
++/** Provider-owned login that can carry subscription usage. */
++export type SystemDefaultLaneDescriptor = {
++  email: string | null
++  /** Whether usage stays fetchable while a managed account is active. */
++  measurableWhenInactive: boolean
++}
+ 
+ export type CursorAccountStatus = {
+   signedIn: boolean
+@@ -139,6 +148,7 @@ export type RateLimitState = {
+   minimax: ProviderRateLimits | null
+   grok: ProviderRateLimits | null
+   cursor: ProviderRateLimits | null
++  qwencloud: ProviderRateLimits | null
+   /**
+    * True when a MiniMax session cookie is persisted on disk. The cookie lives
+    * outside GlobalSettings, so this flag is the durable signal that the
+@@ -162,6 +172,13 @@ export type RateLimitState = {
+   opencodeGoApiKeyConfigured: boolean
+   /** True when main finds a Grok CLI session file (~/.grok/auth.json or GROK_HOME). */
+   grokAuthConfigured: boolean
++  /**
++   * True when the CodexBar CLI is on PATH. One flag for every CodexBar-backed provider
++   * (Qwen Cloud): its absence is the single reason none of them can report. Acts as
++   * the durable visibility signal the way `grokAuthConfigured` does, keeping the meters on the
++   * bar between snapshot refreshes instead of flickering out.
++   */
++  codexbarAvailable: boolean
+   /**
+    * True when main finds a Cursor session on this machine: the macOS Keychain
+    * item cursor-agent writes, its legacy auth.json, or the Cursor IDE's own
+@@ -170,6 +187,12 @@ export type RateLimitState = {
+   cursorAuthConfigured: boolean
+   claudeTarget: RateLimitRuntimeTarget
+   codexTarget: RateLimitRuntimeTarget
++  /** Active managed account; `null` selects the provider login, absent on older hosts. */
++  activeClaudeAccountId?: string | null
++  activeCodexAccountId?: string | null
++  /** Provider-login lane; `null` means no subscription lane, absent on older hosts. */
++  claudeSystemDefault?: SystemDefaultLaneDescriptor | null
++  codexSystemDefault?: SystemDefaultLaneDescriptor | null
+   inactiveClaudeAccounts: InactiveAccountUsage[]
+   inactiveCodexAccounts: InactiveAccountUsage[]
+ }

@@ -1,0 +1,784 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: preserve PTY process and idle lifecycle
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Tests: Declared unit and integration gates in components/orca/build.toml.
+
+diff --git a/src/main/codex/codex-persistent-command-retention.test.ts b/src/main/codex/codex-persistent-command-retention.test.ts
+index 498d5b186ef42176859a061e5419651e85c5c2f9..2c123a3b910c993a1abe45b573f80ef90d41eed2 100644
+--- a/src/main/codex/codex-persistent-command-retention.test.ts
++++ b/src/main/codex/codex-persistent-command-retention.test.ts
+@@ -71,14 +71,15 @@ describe('persistent command retention', () => {
+     items.streams.flush()
+     const originalJoin = Array.prototype.join
+     let retainedJoins = 0
+-    const spy = vi
+-      .spyOn(Array.prototype, 'join')
+-      .mockImplementation(function (this: unknown[], separator) {
+-        if (this[0] === 'retained-prefix') {
+-          retainedJoins += 1
+-        }
+-        return originalJoin.call(this, separator)
+-      })
++    const spy = vi.spyOn(Array.prototype, 'join').mockImplementation(function (
++      this: unknown[],
++      separator
++    ) {
++      if (this[0] === 'retained-prefix') {
++        retainedJoins += 1
++      }
++      return originalJoin.call(this, separator)
++    })
+     try {
+       for (let index = 0; index < 100; index += 1) {
+         items.streams.flush()
+diff --git a/src/main/daemon/daemon-init-dependency-mocks.ts b/src/main/daemon/daemon-init-dependency-mocks.ts
+index d7217d4df635852636034f3f9028614d76503f67..163f8265d1eba9fb93d277bdcbdd773a76097606 100644
+--- a/src/main/daemon/daemon-init-dependency-mocks.ts
++++ b/src/main/daemon/daemon-init-dependency-mocks.ts
+@@ -44,6 +44,7 @@ export function createDaemonInitModuleFactories(state: DaemonInitMockState) {
+     routerSubscriptionError,
+     adapterInstances,
+     defaultListSessionsSessions,
++    inspectProcessResults,
+     listProcessesControl,
+     getLocalPtyProviderMock,
+     setLocalPtyProviderMock,
+@@ -115,6 +116,7 @@ export function createDaemonInitModuleFactories(state: DaemonInitMockState) {
+     readonly fanoutSyntheticExits: Mock
+     readonly listProcesses: Mock
+     readonly listSessions: Mock
++    readonly inspectProcess: Mock
+     readonly establishLifecycleLease: Mock
+     readonly shutdown: Mock
+     readonly dispose: Mock
+@@ -134,6 +136,15 @@ export function createDaemonInitModuleFactories(state: DaemonInitMockState) {
+         listProcessesControl.current ? listProcessesControl.current() : []
+       )
+       this.listSessions = vi.fn(async () => [...defaultListSessionsSessions])
++      this.inspectProcess = vi.fn(
++        async (sessionId: string) =>
++          inspectProcessResults.get(sessionId) ?? {
++            foregroundProcess: null,
++            hasChildProcesses: false,
++            verdict: 'unverifiable',
++            reason: 'old_host'
++          }
++      )
+       const lifecycleLeaseError = lifecycleLeaseErrors.shift()
+       this.establishLifecycleLease = vi.fn(async () => {
+         if (lifecycleLeaseError) {
+diff --git a/src/main/daemon/daemon-init-mock-types.ts b/src/main/daemon/daemon-init-mock-types.ts
+index 341fcd26df7b8f23b36aea589ec12633321d00a1..2363054ef75c8ead1533500619d966ab0a38cf61 100644
+--- a/src/main/daemon/daemon-init-mock-types.ts
++++ b/src/main/daemon/daemon-init-mock-types.ts
+@@ -1,4 +1,5 @@
+ import type { Mock } from 'vitest'
++import type { TerminalProcessInspection } from '../../shared/terminal-process-inspection'
+ 
+ /** Fake DaemonSpawner instance every mocked `new DaemonSpawner()` records. */
+ export type MockSpawner = {
+@@ -27,6 +28,7 @@ export type MockAdapter = {
+   fanoutSyntheticExits: Mock
+   listProcesses: Mock
+   listSessions: Mock
++  inspectProcess: Mock
+   establishLifecycleLease: Mock
+   shutdown: Mock
+   dispose: Mock
+@@ -137,6 +139,9 @@ export type DaemonInitMockState = {
+   routerSubscriptionError: { current: Error | null }
+   adapterInstances: MockAdapter[]
+   defaultListSessionsSessions: { sessionId: string }[]
++  /** Per-session inspection answers the fake adapter hands the startup gate reconcile.
++   *  A session with no entry reads as unverifiable, which keeps the gate closed. */
++  inspectProcessResults: Map<string, TerminalProcessInspection>
+   listProcessesControl: { current: null | (() => Promise<{ sessionId: string }[]>) }
+   getLocalPtyProviderMock: Mock<() => MockLocalPtyProvider>
+   localFallbackProvider: MockLocalPtyProvider
+diff --git a/src/main/daemon/daemon-init-provider-installation.test.ts b/src/main/daemon/daemon-init-provider-installation.test.ts
+index 423ee9ee34f2ea48c337a72fd4754a165dd8fd2b..d089a7548b2899e0d969a4bff3f64ce2455ebefb 100644
+--- a/src/main/daemon/daemon-init-provider-installation.test.ts
++++ b/src/main/daemon/daemon-init-provider-installation.test.ts
+@@ -1,4 +1,5 @@
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import type { TerminalProcessInspection } from '../../shared/terminal-process-inspection'
+ 
+ const {
+   isPackagedMock,
+@@ -17,6 +18,7 @@ const {
+   routerSubscriptionError,
+   adapterInstances,
+   defaultListSessionsSessions,
++  inspectProcessResults,
+   listProcessesControl,
+   getLocalPtyProviderMock,
+   localFallbackProvider,
+@@ -145,6 +147,89 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
+     }
+   })
+ 
++  // Why: a daemon session outliving the Claude that ran in it is the ghost that held the gate
++  // — and the refusal of every isolated launch — for the whole life of the pane (#18211).
++  describe('seeded ids whose pane no longer runs Claude', () => {
++    const liveForeground = (processName: string | null) => ({
++      foregroundProcess: processName,
++      hasChildProcesses: processName !== null,
++      foregroundProcessEvidence: {
++        verdict: 'live' as const,
++        processName,
++        fence: {
++          platform: 'posix' as const,
++          shellPid: 4242,
++          shellStartTime: '1',
++          tty: '/dev/ttys001',
++          foregroundPgid: 4242
++        },
++        authorityGeneration: 'gen-1',
++        observationEpoch: 1,
++        capturedAgeMs: 0,
++        ptyId: 'claude-alive',
++        ptyIncarnationId: 'incarnation-1'
++      }
++    })
++
++    afterEach(() => {
++      inspectProcessResults.clear()
++      defaultListSessionsSessions.length = 0
++    })
++
++    it.each<[string, TerminalProcessInspection]>([
++      ['omp', liveForeground('omp')],
++      ['a shell', liveForeground(null)]
++    ])('releases a surviving session whose foreground is %s', async (_label, inspection) => {
++      const mod = await importFresh()
++      // Why: live-pty-gate is intentionally unmocked — import from the same fresh registry so gate state matches daemon-init's.
++      const gate = await import('../claude-accounts/live-pty-gate')
++      defaultListSessionsSessions.push({ sessionId: 'claude-alive' })
++      inspectProcessResults.set('claude-alive', inspection)
++      gate.seedLiveClaudePtysFromPersistence(['claude-alive'])
++      try {
++        await mod.initDaemonPtyProvider()
++
++        expect(gate.hasLiveClaudePtys()).toBe(false)
++      } finally {
++        gate.markClaudePtyExited('claude-alive')
++      }
++    })
++
++    it.each<[string, TerminalProcessInspection]>([
++      ['claude still owns the foreground', liveForeground('claude')],
++      [
++        'the foreground could not be verified',
++        {
++          foregroundProcess: null,
++          hasChildProcesses: false,
++          foregroundProcessEvidence: {
++            verdict: 'unverifiable' as const,
++            reason: 'process_table_unreadable',
++            authorityGeneration: 'gen-1',
++            observationEpoch: 1,
++            capturedAgeMs: 0,
++            ptyId: 'claude-alive',
++            ptyIncarnationId: 'incarnation-1'
++          }
++        }
++      ]
++    ])('keeps the gate when %s', async (_label, inspection) => {
++      const mod = await importFresh()
++      // Why: live-pty-gate is intentionally unmocked — import from the same fresh registry so gate state matches daemon-init's.
++      const gate = await import('../claude-accounts/live-pty-gate')
++      defaultListSessionsSessions.push({ sessionId: 'claude-alive' })
++      inspectProcessResults.set('claude-alive', inspection)
++      gate.seedLiveClaudePtysFromPersistence(['claude-alive'])
++      try {
++        await mod.initDaemonPtyProvider()
++
++        expect(gate.hasLiveClaudePtys()).toBe(true)
++      } finally {
++        gate.markClaudePtyExited('claude-alive')
++      }
++    })
++  })
++
+   it('does not install a late daemon provider after startup fallback aborts the init attempt', async () => {
+     const mod = await importFresh()
+     let resolveEnsureRunning!: (value: { socketPath: string; tokenPath: string }) => void
+diff --git a/src/main/daemon/daemon-init-test-harness.ts b/src/main/daemon/daemon-init-test-harness.ts
+index 6060ed9b759dda73469f060212e2cfe01c434975..606bfe6900413bc10e5d673d535b443523e5093c 100644
+--- a/src/main/daemon/daemon-init-test-harness.ts
++++ b/src/main/daemon/daemon-init-test-harness.ts
+@@ -15,6 +15,7 @@ import type {
+   MockSpawner,
+   NetConnectStubs
+ } from './daemon-init-mock-types'
++import type { TerminalProcessInspection } from '../../shared/terminal-process-inspection'
+ 
+ export type { DaemonInitMockState } from './daemon-init-mock-types'
+ 
+@@ -120,6 +121,9 @@ function createDaemonInitMockState(): DaemonInitMockState {
+   const adapterInstances: MockAdapter[] = []
+   // Why: adapters are built inside initDaemonPtyProvider, so tests set this before init to make listSessions report live sessions.
+   const defaultListSessionsSessions: { sessionId: string }[] = []
++  // Why: the reconcile asks a surviving session what its foreground is; an id with no entry
++  // answers unverifiable so the gate stays closed unless a test proves otherwise.
++  const inspectProcessResults = new Map<string, TerminalProcessInspection>()
+   const listProcessesControl: {
+     current: null | (() => Promise<{ sessionId: string }[]>)
+   } = { current: null }
+@@ -191,6 +195,7 @@ function createDaemonInitMockState(): DaemonInitMockState {
+     routerSubscriptionError,
+     adapterInstances,
+     defaultListSessionsSessions,
++    inspectProcessResults,
+     listProcessesControl,
+     getLocalPtyProviderMock,
+     localFallbackProvider,
+diff --git a/src/main/daemon/daemon-provider-init.ts b/src/main/daemon/daemon-provider-init.ts
+index c1d73d95a2770d19fc6816d991e2cc9339cea80a..ae0cacffe19ef96197d0fdb77dfc687c8aa2a9a4 100644
+--- a/src/main/daemon/daemon-provider-init.ts
++++ b/src/main/daemon/daemon-provider-init.ts
+@@ -1,8 +1,11 @@
+ import { getLocalPtyProvider, rebindLocalProviderListeners } from '../ipc/pty'
+ import {
+   confirmSeededClaudeLivePtys,
+-  hasSeededUnconfirmedClaudePtys
++  getSeededClaudeLivePtyIds,
++  hasSeededUnconfirmedClaudePtys,
++  isClaudeLivePtyGateHeld
+ } from '../claude-accounts/live-pty-gate'
++import { releaseClaudeLivePtyOnNonClaudeForeground } from '../claude-accounts/live-pty-gate-foreground-release'
+ import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from '../startup/startup-diagnostics'
+ import { checkDaemonHealth } from './daemon-health'
+ import { collectPinnedDaemonVersions, pruneOldDaemonHosts } from './daemon-host-relocation'
+@@ -200,14 +203,39 @@ async function reconcileSeededClaudeLivePtys(provider: DaemonProvider): Promise<
+       provider instanceof DaemonPtyRouter || provider instanceof DegradedDaemonPtyProvider
+         ? provider.getAllAdapters()
+         : [provider]
++    const seeded = new Set(getSeededClaudeLivePtyIds())
+     const results = await Promise.allSettled(adapters.map((entry) => entry.listSessions()))
+     if (results.some((result) => result.status === 'rejected')) {
+       console.warn('[daemon] Keeping seeded Claude live-PTY gate — session listing failed')
+       return
+     }
+-    confirmSeededClaudeLivePtys(
+-      results.flatMap((result) =>
+-        result.status === 'fulfilled' ? result.value.map((session) => session.sessionId) : []
++    const aliveByAdapter = adapters.map((adapter, index) => {
++      const result = results[index]
++      return {
++        adapter,
++        sessionIds:
++          result?.status === 'fulfilled' ? result.value.map((session) => session.sessionId) : []
++      }
++    })
++    confirmSeededClaudeLivePtys(aliveByAdapter.flatMap((entry) => entry.sessionIds))
++    // Why: a surviving daemon session is not a surviving Claude. A pane whose
++    // Claude exited back to its shell keeps its session id alive forever, so
++    // liveness alone would hold the refresh gate for the life of the pane.
++    await Promise.all(
++      aliveByAdapter.flatMap(({ adapter, sessionIds }) =>
++        sessionIds
++          .filter((sessionId) => seeded.has(sessionId) && isClaudeLivePtyGateHeld(sessionId))
++          .map(async (sessionId) => {
++            try {
++              releaseClaudeLivePtyOnNonClaudeForeground(
++                sessionId,
++                await adapter.inspectProcess(sessionId),
++                'startup-reconcile'
++              )
++            } catch {
++              // Why: an inspection that failed observed nothing — fail closed and keep the gate.
++            }
++          })
+       )
+     )
+   } catch (error) {
+diff --git a/src/main/ipc/command-path-resolver.ts b/src/main/ipc/command-path-resolver.ts
+index e2fe49747e0d204274d0e8f1eae3c8e1e0013ee6..963383dab033b89900fd664e872030732398459a 100644
+--- a/src/main/ipc/command-path-resolver.ts
++++ b/src/main/ipc/command-path-resolver.ts
+@@ -58,18 +58,22 @@ async function isExecutableFile(candidate: string, isWin: boolean): Promise<bool
+ }
+ 
+ /**
+- * Resolve whether `command` is an executable on PATH using only `node:fs`
++ * Resolve `command` to its absolute path on PATH using only `node:fs`
+  * — zero `where`/`which` subprocess spawns. Mirrors the canonical
+  * which(1)/where.exe lookup, including the current preflight quirk that only
+  * counts matches which resolve to an ABSOLUTE path (so relative PATH entries
+  * and relative command paths stay not-found, exactly as before).
++ *
++ * Returns the path rather than a boolean because spawn callers need it: on
++ * Windows, `ProcessSpec.program` must already be absolute or the child's own
++ * PATH decides what runs.
+  */
+-export async function isCommandOnLocalPath(
++export async function resolveCommandOnLocalPath(
+   command: string,
+   options: ResolveCommandOptions = {}
+-): Promise<boolean> {
++): Promise<string | null> {
+   if (!command) {
+-    return false
++    return null
+   }
+   const platform = options.platform ?? process.platform
+   const env = options.env ?? process.env
+@@ -98,9 +102,16 @@ export async function isCommandOnLocalPath(
+         continue
+       }
+       if (await isExecutableFile(candidate, isWin)) {
+-        return true
++        return candidate
+       }
+     }
+   }
+-  return false
++  return null
++}
++
++export async function isCommandOnLocalPath(
++  command: string,
++  options: ResolveCommandOptions = {}
++): Promise<boolean> {
++  return (await resolveCommandOnLocalPath(command, options)) !== null
+ }
+diff --git a/src/main/ipc/pty-session-liveness-and-ownership.test.ts b/src/main/ipc/pty-session-liveness-and-ownership.test.ts
+index 574e83c122085447cace479c47166afca9773841..4db9e6f7147db0b0521fb23637522eefa8013ec7 100644
+--- a/src/main/ipc/pty-session-liveness-and-ownership.test.ts
++++ b/src/main/ipc/pty-session-liveness-and-ownership.test.ts
+@@ -9,6 +9,12 @@ import {
+   setLocalPtyProvider,
+   unregisterSshPtyProvider
+ } from './pty'
++import {
++  hasLiveClaudePtys,
++  markClaudePtyExited,
++  markClaudePtySpawned,
++  onLiveClaudePtysDrained
++} from '../claude-accounts/live-pty-gate'
+ 
+ vi.mock('electron', () => import('./pty-ipc-mock-registry').then((m) => m.electronModuleMock()))
+ vi.mock('fs', () => import('./pty-ipc-mock-registry').then((m) => m.fsModuleMock()))
+@@ -107,6 +113,53 @@ describe('registerPtyHandlers', () => {
+       expect(inspectProcess).not.toHaveBeenCalled()
+     }
+   )
++  // Why: a pane's own cadence poll is the only thing that sees a Claude exit back to its
++  // shell inside a daemon session that stays alive; PTY liveness alone would hold the
++  // OAuth-refresh gate — and the legacy-migration refusal — for the life of the pane.
++  it('releases the Claude live-PTY gate when a cadence poll sees the pane back at its shell', async () => {
++    const evidence = (processName: string | null) => ({
++      foregroundProcess: processName,
++      hasChildProcesses: processName !== null,
++      foregroundProcessEvidence: {
++        verdict: 'live' as const,
++        processName,
++        fence: {
++          platform: 'posix' as const,
++          shellPid: 4242,
++          shellStartTime: '1',
++          tty: '/dev/ttys001',
++          foregroundPgid: 4242
++        },
++        authorityGeneration: 'gen-1',
++        observationEpoch: 1,
++        capturedAgeMs: 0,
++        ptyId: 'gate-held-pty',
++        ptyIncarnationId: 'incarnation-1'
++      }
++    })
++    const inspectProcess = vi.fn(async () => evidence('claude'))
++    registerPtyHandlers(mainWindow as never)
++    setLocalPtyProvider({ inspectProcess, hasPty: vi.fn(() => true) } as never)
++    const drained = vi.fn()
++    const unsubscribe = onLiveClaudePtysDrained(drained)
++    try {
++      markClaudePtySpawned('gate-held-pty', { route: 'account-dir', accountId: 'account-1' })
++
++      await handlers.get('pty:inspectProcess')!(null, { id: 'gate-held-pty', steadyState: true })
++      expect(hasLiveClaudePtys()).toBe(true)
++
++      inspectProcess.mockResolvedValue(evidence('zsh'))
++      await handlers.get('pty:inspectProcess')!(null, { id: 'gate-held-pty', steadyState: true })
++      expect(hasLiveClaudePtys()).toBe(false)
++      expect(drained).toHaveBeenCalledTimes(1)
++
++      await handlers.get('pty:inspectProcess')!(null, { id: 'gate-held-pty', steadyState: true })
++      expect(drained).toHaveBeenCalledTimes(1)
++    } finally {
++      unsubscribe()
++      markClaudePtyExited('gate-held-pty')
++    }
++  })
+   it('lists duplicate SSH relay session ids as distinct app sessions', async () => {
+     registerPtyHandlers(mainWindow as never)
+     const shutdownA = vi.fn(async () => undefined)
+diff --git a/src/main/ipc/pty/ipc/inspect.ts b/src/main/ipc/pty/ipc/inspect.ts
+index 37226017b8f365b589efc3f6c383ffd8060644d5..6568bc55c79aa66fe5bdb20879203ce3a4a90cb8 100644
+--- a/src/main/ipc/pty/ipc/inspect.ts
++++ b/src/main/ipc/pty/ipc/inspect.ts
+@@ -1,6 +1,7 @@
+ import { getPtyIpc } from '../../pty-host-bindings'
+ import { parseAppSshPtyId } from '../../../providers/ssh-pty-id'
+ import { inspectPtyProviderProcessForRenderer } from '../../../providers/pty-process-inspection'
++import { releaseClaudeLivePtyOnNonClaudeForeground } from '../../../claude-accounts/live-pty-gate-foreground-release'
+ import { clientOnlyUnverifiableInspection } from '../../../../shared/terminal-process-inspection'
+ import {
+   PtyProcessListAdmission,
+@@ -219,9 +220,14 @@ export function installPtyInspectIpcHandlers(deps: {
+         ...(args.scanChildProcesses === true ? { scanChildProcesses: true } : {}),
+         ...(args.steadyState === true ? { steadyState: true } : {})
+       }
+-      return Object.keys(options).length > 0
++      const inspection = await (Object.keys(options).length > 0
+         ? inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id, options)
+-        : inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id)
++        : inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id))
++      // Why: the pane's own cadence poll is the only thing that observes a Claude
++      // exiting back to its shell inside a session that stays alive; without this
++      // the live-PTY gate would hold that pane's refresh until the PTY itself dies.
++      releaseClaudeLivePtyOnNonClaudeForeground(args.id, inspection, 'steady-state')
++      return inspection
+     }
+   )
+ 
+diff --git a/src/main/ipc/pty/ipc/spawn-commit.ts b/src/main/ipc/pty/ipc/spawn-commit.ts
+index 77491c9fb11b6e065497d42a42d926bde724bfe3..a43f20767c17d23c4209e2fc42173aa14f3232b2 100644
+--- a/src/main/ipc/pty/ipc/spawn-commit.ts
++++ b/src/main/ipc/pty/ipc/spawn-commit.ts
+@@ -1,6 +1,9 @@
+ import { isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
+ import { agentHookServer } from '../../../agent-hooks/server'
+-import { markClaudePtySpawned } from '../../../claude-accounts/live-pty-gate'
++import {
++  claudeLivePtyBindingForPreparation,
++  markClaudePtySpawned
++} from '../../../claude-accounts/live-pty-gate'
+ import { registerPty } from '../../../memory/pty-registry'
+ import type { PtySpawnResult } from '../../../providers/types'
+ import { clearMigrationUnsupportedPtysForPaneKey } from '../../../agent-hooks/migration-unsupported-pty-state'
+@@ -120,7 +123,7 @@ export async function commitPtyIpcSpawn(ctx: PtyIpcSpawnState): Promise<PtySpawn
+     )
+   }
+   if (ctx.isClaudeLaunch && !ctx.stablePaneOwner) {
+-    markClaudePtySpawned(ctx.result.id)
++    markClaudePtySpawned(ctx.result.id, claudeLivePtyBindingForPreparation(ctx.claudeAuth))
+   }
+   // Why: record the paneKey mapping so clearProviderPtyState can clear the agent-hooks server's per-paneKey caches on exit.
+   // Why: args.env is untrusted IPC JSON (type unenforced); bound the paneKey so malformed/oversized values can't pollute ptyPaneKey or clearPaneState.
+diff --git a/src/main/ipc/pty/runtime/spawn-commit.ts b/src/main/ipc/pty/runtime/spawn-commit.ts
+index 856039e7d5a34543dab5f4294a95a2e7d191feaf..48600f3f5d3f65cc11dd6eaeb5beeda74dc5f3e8 100644
+--- a/src/main/ipc/pty/runtime/spawn-commit.ts
++++ b/src/main/ipc/pty/runtime/spawn-commit.ts
+@@ -7,7 +7,10 @@ import {
+   recordCodexPaneAccountForSpawn,
+   codexReattachedHomeRouteField
+ } from '../host-env/codex-home'
+-import { markClaudePtySpawned } from '../../../claude-accounts/live-pty-gate'
++import {
++  claudeLivePtyBindingForPreparation,
++  markClaudePtySpawned
++} from '../../../claude-accounts/live-pty-gate'
+ import { registerPty } from '../../../memory/pty-registry'
+ import { rememberPaneKeyForPty } from '../pane/key-state'
+ import {
+@@ -223,7 +226,7 @@ export async function commitRuntimePtySpawn(ctx: RuntimePtySpawnState) {
+     ctx.deps.runtime?.noteTerminalSpawnCommand?.(ctx.result.id, ctx.launchCommand ?? null)
+   }
+   if (ctx.isClaudeLaunch && !ctx.stablePaneOwner) {
+-    markClaudePtySpawned(ctx.result.id)
++    markClaudePtySpawned(ctx.result.id, claudeLivePtyBindingForPreparation(ctx.claudeAuth))
+   }
+   if (args.telemetry && !ctx.stablePaneOwner) {
+     recordPtySpawnTelemetry(args.telemetry)
+diff --git a/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts b/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
+index 3907fa7a6458f72be5ea9fb7d199a3af063acd85..5a859fb2e81f7316215852040b396110c13f586b 100644
+--- a/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
++++ b/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
+@@ -24,15 +24,16 @@ describe('empty streamed deltas', () => {
+       }
+       const originalJoin = Array.prototype.join
+       let retainedSlots = -1
+-      const spy = vi
+-        .spyOn(Array.prototype, 'join')
+-        .mockImplementation(function (this: unknown[], separator) {
+-          // Byte counters cannot detect empty entries retained by the stream's chunk array.
+-          if (separator === '' && this[0] === prefix) {
+-            retainedSlots = this.length
+-          }
+-          return originalJoin.call(this, separator)
+-        })
++      const spy = vi.spyOn(Array.prototype, 'join').mockImplementation(function (
++        this: unknown[],
++        separator
++      ) {
++        // Byte counters cannot detect empty entries retained by the stream's chunk array.
++        if (separator === '' && this[0] === prefix) {
++          retainedSlots = this.length
++        }
++        return originalJoin.call(this, separator)
++      })
+       let snapshot: ReturnType<typeof streams.snapshot>
+       try {
+         snapshot = streams.snapshot('thread', 'item')
+diff --git a/src/main/pty/posix-pty-descendant-process-groups.ts b/src/main/pty/posix-pty-descendant-process-groups.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c489c706b42e883856b5391c89ccdff0a17e8897
+--- /dev/null
++++ b/src/main/pty/posix-pty-descendant-process-groups.ts
+@@ -0,0 +1,73 @@
++import { runProcessSync } from '../../shared/child-process/run-process'
++
++// Why: the whole-host read runs only after the TTY-scoped one failed, and it is the last thing
++// standing between a closed pane and a surviving agent process, so it gets the longer budget.
++const DESCENDANT_TABLE_TIMEOUT_MS = 3_000
++const DESCENDANT_TABLE_MAX_BYTES = 1024 * 1024
++
++type DescendantRow = {
++  pid: number
++  ppid: number
++  pgid: number
++}
++
++/** Whole-host `pid ppid pgid` table, read only when the TTY-scoped table cannot answer. */
++export function readPosixDescendantProcessTable(): string {
++  const result = runProcessSync({
++    program: 'ps',
++    args: ['-axo', 'pid=,ppid=,pgid='],
++    env: { ...process.env, LC_ALL: 'C' },
++    timeoutMs: DESCENDANT_TABLE_TIMEOUT_MS,
++    maxOutputBytes: DESCENDANT_TABLE_MAX_BYTES
++  })
++  if (result.code !== 0 || result.timedOut || result.outputTruncated) {
++    throw new Error('PTY descendant process table is unavailable')
++  }
++  return result.stdout
++}
++
++/**
++ * Every process group under one PTY leader, proven by parentage instead of TTY: the leader's
++ * own group last, so its children are dead before it is. Null when the leader is absent from the
++ * table or when Orca itself sits in the tree — never group-signal a group Orca belongs to.
++ */
++export function getPosixDescendantProcessGroups(
++  output: string,
++  rootPid: number,
++  currentPid = process.pid
++): number[] | null {
++  const rows: DescendantRow[] = []
++  for (const line of output.split(/\r?\n/)) {
++    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line)
++    if (match) {
++      rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]) })
++    }
++  }
++  const root = rows.find((row) => row.pid === rootPid)
++  if (!root || root.pgid <= 1) {
++    return null
++  }
++  const childrenByParent = new Map<number, DescendantRow[]>()
++  for (const row of rows) {
++    const siblings = childrenByParent.get(row.ppid)
++    if (siblings) {
++      siblings.push(row)
++    } else {
++      childrenByParent.set(row.ppid, [row])
++    }
++  }
++  const tree = [root]
++  for (let index = 0; index < tree.length; index++) {
++    for (const child of childrenByParent.get(tree[index].pid) ?? []) {
++      if (!tree.includes(child)) {
++        tree.push(child)
++      }
++    }
++  }
++  if (tree.some((row) => row.pid === currentPid)) {
++    return null
++  }
++  const groups = new Set(tree.filter((row) => row.pgid > 1).map((row) => row.pgid))
++  groups.delete(root.pgid)
++  return [...groups].sort((left, right) => left - right).concat(root.pgid)
++}
+diff --git a/src/main/pty/posix-pty-process-groups.test.ts b/src/main/pty/posix-pty-process-groups.test.ts
+index f0b3727c6ee44199812b2730d5f4139737910fd0..b754860fe38acd45c1cff8eef39584a7d4eb6fe9 100644
+--- a/src/main/pty/posix-pty-process-groups.test.ts
++++ b/src/main/pty/posix-pty-process-groups.test.ts
+@@ -409,6 +409,96 @@ describe('POSIX PTY process-group termination', () => {
+     expect(fallback).toHaveBeenCalledOnce()
+     expect(readProcessTable).not.toHaveBeenCalled()
+   })
++
++  // Measured 2026-09-02 on a loaded Mac (17 agent sessions, a test gate running): the TTY-scoped
++  // `ps` timed out, so the only kill that reached the pane was the leader-only fallback. The
++  // `login` leader died, its `zsh -l` and the agent underneath survived with no controlling TTY,
++  // and each survivor kept an orchestration long-poll open until the runtime's 16-slot cap was
++  // full. The descendant tree needs no TTY to prove ownership: everything under the leader is the
++  // pane's, so it is the strategy that runs when the TTY read cannot.
++  describe('descendant-tree strategy', () => {
++    const TREE = `
++      100    1  100
++      101  100  101
++      102  101  102
++      103  102  103
++      104  101  101
++      200    1  200
++      999    1  999
++    `
++
++    it('kills every group under the leader when the TTY read fails, leader group last', () => {
++      const fallback = vi.fn()
++      const signalProcessGroup = vi.fn()
++
++      forceKillPosixPtyProcessGroups(100, fallback, {
++        platform: 'darwin',
++        currentPid: 999,
++        readProcessTable: () => {
++          throw new Error('ps timed out')
++        },
++        readDescendantTable: () => TREE,
++        signalProcessGroup
++      })
++
++      expect(signalProcessGroup.mock.calls.map(([pgid]) => pgid)).toEqual([101, 102, 103, 100])
++      expect(fallback).not.toHaveBeenCalled()
++    })
++
++    it('never group-signals a tree that contains Orca itself', () => {
++      const fallback = vi.fn()
++      const signalProcessGroup = vi.fn()
++
++      forceKillPosixPtyProcessGroups(100, fallback, {
++        platform: 'darwin',
++        currentPid: 103,
++        readProcessTable: () => {
++          throw new Error('ps timed out')
++        },
++        readDescendantTable: () => TREE,
++        signalProcessGroup
++      })
++
++      expect(signalProcessGroup).not.toHaveBeenCalled()
++      expect(fallback).toHaveBeenCalledOnce()
++    })
++
++    it('falls back only when neither table proves what the leader owns', () => {
++      const fallback = vi.fn()
++      const signalProcessGroup = vi.fn()
++
++      forceKillPosixPtyProcessGroups(100, fallback, {
++        platform: 'darwin',
++        currentPid: 999,
++        readProcessTable: () => {
++          throw new Error('ps timed out')
++        },
++        readDescendantTable: () => `
++          200    1  200
++        `,
++        signalProcessGroup
++      })
++
++      expect(signalProcessGroup).not.toHaveBeenCalled()
++      expect(fallback).toHaveBeenCalledOnce()
++    })
++
++    it('prefers the TTY table when it answers, so the proven path is unchanged', () => {
++      const readDescendantTable = vi.fn(() => TREE)
++      const signalProcessGroup = vi.fn()
++
++      forceKillPosixPtyProcessGroups(100, vi.fn(), {
++        platform: 'darwin',
++        currentPid: 999,
++        readProcessTable: () => TABLE,
++        readDescendantTable,
++        signalProcessGroup
++      })
++
++      expect(readDescendantTable).not.toHaveBeenCalled()
++      expect(signalProcessGroup.mock.calls.map(([pgid]) => pgid)).toEqual([101, 103, 100])
++    })
++  })
+ })
+ 
+ describe('POSIX PTY group-sweep breadcrumbs', () => {
+diff --git a/src/main/pty/posix-pty-process-groups.ts b/src/main/pty/posix-pty-process-groups.ts
+index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676ccbda73fa 100644
+--- a/src/main/pty/posix-pty-process-groups.ts
++++ b/src/main/pty/posix-pty-process-groups.ts
+@@ -5,6 +5,10 @@ import {
+   runProcessSync,
+   type ProcessResult
+ } from '../../shared/child-process/run-process'
++import {
++  getPosixDescendantProcessGroups,
++  readPosixDescendantProcessTable
++} from './posix-pty-descendant-process-groups'
+ 
+ const PROCESS_TABLE_TIMEOUT_MS = 1_000
+ const PROCESS_TABLE_MAX_BYTES = 1024 * 1024
+@@ -36,6 +40,7 @@ export type PosixPtyProcessGroupTerminationDeps = {
+   platform?: NodeJS.Platform
+   currentPid?: number
+   readProcessTable?: () => string
++  readDescendantTable?: () => string
+   signalProcessGroup?: (pgid: number) => void
+ }
+ 
+@@ -236,6 +241,12 @@ export function signalPosixPtyProcessGroups(
+     fallback()
+     return
+   }
++  // Why: the TTY-scoped table is the proven path — one `ps -t`, proportional to one terminal.
++  // When it cannot answer (a `ps` that timed out under load, a leader already off its TTY), the
++  // leader's descendant tree still proves ownership by parentage. Measured 2026-09-02 on a Mac
++  // running 17 agent sessions: the TTY read failed, the leader-only fallback killed `login` and
++  // left its `zsh -l` and the agent underneath alive with no controlling TTY, and each survivor
++  // held an orchestration long-poll until the runtime's cap was full.
+   let groups: number[] | null
+   try {
+     groups = getPosixPtyProcessGroups(
+@@ -246,6 +257,19 @@ export function signalPosixPtyProcessGroups(
+   } catch {
+     groups = null
+   }
++  // Only a forced kill falls back to parentage: it is the close path the fallback exists for, and a
++  // flow-control stop keeps upstream's TTY-proven scope.
++  if ((!groups || groups.length === 0) && signal === 'SIGKILL') {
++    try {
++      groups = getPosixDescendantProcessGroups(
++        (deps.readDescendantTable ?? readPosixDescendantProcessTable)(),
++        rootPid,
++        deps.currentPid ?? process.pid
++      )
++    } catch {
++      groups = null
++    }
++  }
+   if (!groups || groups.length === 0) {
+     fallback()
+     return
+diff --git a/src/main/runtime/dec-private-mode-chunk.ts b/src/main/runtime/dec-private-mode-chunk.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6aca8871860099c3043c3d30a00e789948105a96
+--- /dev/null
++++ b/src/main/runtime/dec-private-mode-chunk.ts
+@@ -0,0 +1,15 @@
++// eslint-disable-next-line no-control-regex -- matching ESC is the point
++const DEC_PRIVATE_MODE_ONLY = /^(?:\x1b\[\?\d+(?:;\d+)*[hl])+$/
++
++/**
++ * Whether a PTY chunk is nothing but DEC private-mode set/reset sequences
++ * (`ESC [ ? n[;n...] h|l`, one or more).
++ *
++ * Why: such a chunk is terminal housekeeping, not agent output. OMP 18.4.1 re-asserts
++ * bracketed paste (`\x1b[?2004h`) every second while idle; counting it as output keeps
++ * lastOutputAt fresh forever, so tui-idle quiescence never arrives and worker-start
++ * never pastes its brief.
++ */
++export function isDecPrivateModeOnlyChunk(data: string): boolean {
++  return DEC_PRIVATE_MODE_ONLY.test(data)
++}

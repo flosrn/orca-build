@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: package Debian data with publisher-readable gzip
+
+Carried-Because: The in-process artifact publisher accepts gzip data archives and refuses electron-builder default xz.
+Tests: config/scripts/electron-builder-config.test.mjs
+
+diff --git a/config/electron-builder.config.cjs b/config/electron-builder.config.cjs
+index 8f2ed104cbd404eace5b651f486d37e8a9b23620..906381aad66b20f22889e13a9dbf1c088b22bda2 100644
+--- a/config/electron-builder.config.cjs
++++ b/config/electron-builder.config.cjs
+@@ -598,6 +598,8 @@ module.exports = {
+     artifactName: isLinuxArm64Release ? 'orca-linux-arm64.${ext}' : 'orca-linux.${ext}'
+   },
+   deb: {
++    // The HarnessOS publisher inspects data.tar in-process and refuses xz.
++    compression: 'gz',
+     packageName: 'orca-ide',
+     artifactName: isLinuxArm64Release ? 'orca-linux-arm64.${ext}' : 'orca-linux-x64.${ext}',
+     // Why: xvfb lets the bundled `orca serve` CLI run browser panes on a headless
+diff --git a/config/scripts/electron-builder-config.test.mjs b/config/scripts/electron-builder-config.test.mjs
+index 941959bbb9161b584c7feeeab2f503294f0dc265..24f74e8693f8bf99a9b24a7dacc04ec810c259c1 100644
+--- a/config/scripts/electron-builder-config.test.mjs
++++ b/config/scripts/electron-builder-config.test.mjs
+@@ -284,6 +284,12 @@ describe('electron-builder config', () => {
+     }
+   })
+ 
++  // Why: the HarnessOS publisher inspects the deb data archive in-process and refuses
++  // electron-builder's default xz.
++  it('packages Debian data with gzip compression', () => {
++    expect(electronBuilderConfig.deb.compression).toBe('gz')
++  })
++
+   it('validates each AppImage before electron-builder publishes it', async () => {
+     const root = await mkdtemp(join(tmpdir(), 'orca-electron-builder-appimage-'))
+     try {
+diff --git a/docs/reference/linux-glibc-compatibility.md b/docs/reference/linux-glibc-compatibility.md
+index 89d6b981119056a25200674ec0a5c47fdbf59d5f..0ae6a67a48642153b5c0569ed347d39fbba731bc 100644
+--- a/docs/reference/linux-glibc-compatibility.md
++++ b/docs/reference/linux-glibc-compatibility.md
+@@ -15,9 +15,11 @@ Fedora/RHEL, or `rpm` through Homebrew on macOS, then verify it with
+ requirement.
+ 
+ The HarnessOS x64 Debian artifact is `dist/orca-linux-x64.deb`. Its resources
+-include `orca-fork-build.json` naming the full workbench HEAD. Before publication,
+-the confined builder must qualify those exact bytes for tailnet-only binding;
+-ordinary development builds and loopback-only probes do not qualify an artifact.
++include `orca-fork-build.json` naming the full workbench HEAD and verified series
++and build digests. The Debian data archive uses gzip (`deb.compression: 'gz'`),
++not electron-builder's default xz, so the publisher can inspect it in-process.
++Before publication, the confined builder must qualify those exact bytes for
++tailnet-only binding; development builds and loopback probes do not qualify it.
+ 
+ ## Why this needs attention
+ 

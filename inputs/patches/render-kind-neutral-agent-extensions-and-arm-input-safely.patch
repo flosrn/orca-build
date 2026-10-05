@@ -1,0 +1,1346 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: render kind-neutral agent extensions and arm input safely
+
+Carried-Because: Shared Pi and OMP homes must not depend on pane launch order; host-owned timers contain teardown and input preflight status.
+Tests: src/main/pi/*test.ts; src/main/ipc/pty-spawn-env-agent-overlays.test.ts; src/main/ipc/pty-daemon-spawn-codex-auth.test.ts; src/main/ipc/pty-daemon-spawn-session-identity.test.ts
+
+diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
+index 4a3b807f1493df461d4989778c3c767dca9a5a05..063bf0ba85e5b9a67f7e71a77fdf91170f9b9624 100644
+--- a/.github/CONTRIBUTING.md
++++ b/.github/CONTRIBUTING.md
+@@ -32,6 +32,14 @@ and Mac `orca-local-build.json` record the full workbench HEAD; environment comm
+ overrides cannot replace it. HarnessOS publication additionally requires the exact
+ artifact's signing and bind qualifications. A local build alone is not qualification.
+ 
++Pi and OMP can share `PI_CODING_AGENT_DIR`. Explicit agent launches install the
++same runtime-detecting status, prefill and titlebar templates into `agent/extensions/`;
++non-agent panes do not rewrite that directory. Files without Orca's managed marker
++remain user-owned. OMP's explicit status fallback is path-deduplicated by its loader,
++not content-deduplicated: a separate user copy can still produce duplicate events.
++The titlebar observes input before preflight, adopts that animation at agent start,
++and uses OMP's managed timers so shutdown cancels both animation and input expiry.
++
+ ## Branch Naming
+ 
+ Use a clear, descriptive branch name that reflects the change.
+diff --git a/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts b/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
+index cb60984c50cfe72e6053cf79b9e974397cead16f..7be488e441c16aa831e9b0ab8bfa6944521a89f6 100644
+--- a/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
++++ b/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
+@@ -1,14 +1,6 @@
+ import { describe, expect, it, vi } from 'vitest'
+-import {
+-  readFileSyncMock,
+-  openCodeBuildPtyEnvMock,
+-  piBuildPtyEnvMock
+-} from './pty-ipc-mock-registry'
+-import {
+-  expectedOmpStatusExtension,
+-  TEST_CODEX_HOME,
+-  TEST_CODEX_AUTH_JSON
+-} from './pty-ipc-test-constants'
++import { readFileSyncMock, openCodeBuildPtyEnvMock } from './pty-ipc-mock-registry'
++import { TEST_CODEX_HOME, TEST_CODEX_AUTH_JSON } from './pty-ipc-test-constants'
+ import { setupPtyIpcSuite } from './pty-ipc-test-harness'
+ import { createDaemonActiveProviderFixtures } from './pty-ipc-daemon-provider-fixtures'
+ import { join } from 'node:path'
+@@ -458,39 +450,15 @@ describe('registerPtyHandlers', () => {
+         expect(env.ORCA_OPENCODE_CONFIG_DIR).toBe('/tmp/orca-opencode-overlay')
+         expect(env.ORCA_OPENCODE_SOURCE_CONFIG_DIR).toBe('/user/custom/opencode')
+       })
+-      it('installs Pi managed extensions without redirecting homes on the daemon path', async () => {
+-        const env = await daemonSpawnAndGetEnv({ PI_CODING_AGENT_DIR: '/user/.pi/agent' })
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-          expect.any(String),
+-          '/user/.pi/agent',
+-          'pi',
+-          {
+-            materializeDefaultHome: false
+-          }
+-        )
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(expect.any(String), undefined, 'omp', {
+-          materializeDefaultHome: false
+-        })
+-        expect(env.PI_CODING_AGENT_DIR).toBe('/user/.pi/agent')
+-        expect(env.ORCA_PI_CODING_AGENT_DIR).toBeUndefined()
+-        expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBe('/user/.pi/agent')
+-        expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
+-        expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(expectedOmpStatusExtension)
+-      })
+       it('does not materialize agent homes when another daemon agent mentions OMP', async () => {
+         const env = await daemonSpawnAndGetEnv(undefined, undefined, undefined, undefined, {
+           command: 'codex "ask about omp"',
+           launchAgent: 'codex'
+         })
+ 
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledTimes(1)
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(expect.any(String), undefined, 'pi', {
+-          materializeDefaultHome: false
+-        })
+         expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBeUndefined()
+       })
+-      it('threads command: "omp" through to piBuildPtyEnv on the daemon path with OMP status metadata', async () => {
+-        // Why: mirror of the local-spawn OMP threading assertion; the daemon path's `command` forwarding could silently regress otherwise.
++      it('preserves the OMP home and status metadata on the daemon path', async () => {
+         const env = await daemonSpawnAndGetEnv(
+           { PI_CODING_AGENT_DIR: '/user/.omp/agent' },
+           undefined,
+@@ -498,12 +466,6 @@ describe('registerPtyHandlers', () => {
+           undefined,
+           { command: 'omp' }
+         )
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-          expect.any(String),
+-          '/user/.omp/agent',
+-          'omp',
+-          { materializeDefaultHome: true }
+-        )
+         expect(env.PI_CODING_AGENT_DIR).toBe('/user/.omp/agent')
+         expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
+         expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+@@ -525,12 +487,6 @@ describe('registerPtyHandlers', () => {
+           { command: 'powershell wait-wrapper' }
+         )
+ 
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-          expect.any(String),
+-          '/user/.omp/agent',
+-          'omp',
+-          { materializeDefaultHome: true }
+-        )
+         expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+           '/user/.omp/agent/extensions/orca-agent-status.ts'
+         )
+diff --git a/src/main/ipc/pty-daemon-spawn-session-identity.test.ts b/src/main/ipc/pty-daemon-spawn-session-identity.test.ts
+index 766decf1c9c0b7c7462e19f7a0501480947d5ad9..c22a300a5190199eac31da636962ebfcb39b4384 100644
+--- a/src/main/ipc/pty-daemon-spawn-session-identity.test.ts
++++ b/src/main/ipc/pty-daemon-spawn-session-identity.test.ts
+@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
+ import {
+   openCodeBuildPtyEnvMock,
+   openCodeClearPtyMock,
+-  piBuildPtyEnvMock,
+   piClearPtyMock
+ } from './pty-ipc-mock-registry'
+ import { setupPtyIpcSuite } from './pty-ipc-test-harness'
+@@ -92,7 +91,7 @@ describe('registerPtyHandlers', () => {
+         expect(env.GIT_CONFIG_KEY_1).toBe('credential.interactive')
+         expect(env.GIT_CONFIG_KEY_2).toBe('credential.guiPrompt')
+       })
+-      it('passes the minted sessionId through to provider.spawn and host env setup', async () => {
++      it('passes the minted sessionId through to provider.spawn', async () => {
+         const daemonSpawn = setupDaemonAdapter()
+         handlers.clear()
+         registerPtyHandlers(mainWindow as never)
+@@ -106,9 +105,6 @@ describe('registerPtyHandlers', () => {
+         expect(sessionId).toEqual(expect.any(String))
+         expect((sessionId ?? '').length).toBeGreaterThan(0)
+         expect(spawnOpts.isNewSession).toBe(true)
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(sessionId, undefined, 'pi', {
+-          materializeDefaultHome: false
+-        })
+       })
+       it('respects a caller-provided sessionId instead of minting a new one', async () => {
+         const daemonSpawn = setupDaemonAdapter()
+@@ -122,9 +118,6 @@ describe('registerPtyHandlers', () => {
+         })
+         expect(daemonSpawn.mock.calls.at(-1)![0].sessionId).toBe('user-session-42')
+         expect(daemonSpawn.mock.calls.at(-1)![0].isNewSession).toBeUndefined()
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith('user-session-42', undefined, 'pi', {
+-          materializeDefaultHome: false
+-        })
+       })
+       it('prefixes a minted sessionId with the worktreeId when provided', async () => {
+         // Why: daemon reconnect keys live-shell survival on the sessionId; prefixing with worktreeId scopes sessions by worktree with a unique tail.
+@@ -139,9 +132,6 @@ describe('registerPtyHandlers', () => {
+         })
+         const sessionId = daemonSpawn.mock.calls.at(-1)![0].sessionId ?? ''
+         expect(sessionId).toMatch(/^wt-alpha@@[0-9a-f]{8}$/)
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(sessionId, undefined, 'pi', {
+-          materializeDefaultHome: false
+-        })
+       })
+       it('reuses one attach-style daemon session for fresh-agent operation retries', async () => {
+         const daemonSpawn = setupDaemonAdapter()
+@@ -209,16 +199,14 @@ describe('registerPtyHandlers', () => {
+ 
+         expect(daemonSpawn).not.toHaveBeenCalled()
+       })
+-      it('falls back to process.env.PI_CODING_AGENT_DIR when baseEnv lacks it on the daemon path', async () => {
++      it('uses the ambient Pi home for an explicit daemon Pi launch when baseEnv lacks it', async () => {
+         // Why: buildPtyHostEnv reads `baseEnv.X ?? process.env.X` so the agent-dir guard works whether Pi's env came over IPC or via daemon fork.
+-        const env = await daemonSpawnAndGetEnv({}, undefined, undefined, {
+-          PI_CODING_AGENT_DIR: '/ambient/pi/agent'
+-        })
+-        expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-          expect.any(String),
+-          '/ambient/pi/agent',
+-          'pi',
+-          { materializeDefaultHome: false }
++        const env = await daemonSpawnAndGetEnv(
++          {},
++          undefined,
++          undefined,
++          { PI_CODING_AGENT_DIR: '/ambient/pi/agent' },
++          { launchAgent: 'pi' }
+         )
+         expect(env.PI_CODING_AGENT_DIR).toBeUndefined()
+         expect(env.ORCA_PI_CODING_AGENT_DIR).toBeUndefined()
+@@ -255,7 +243,6 @@ describe('registerPtyHandlers', () => {
+           })
+         ).rejects.toThrow(/Invalid PTY session id/)
+         expect(daemonSpawn).not.toHaveBeenCalled()
+-        expect(piBuildPtyEnvMock).not.toHaveBeenCalled()
+       })
+       it('sweeps per-PTY state when provider.spawn fails for a MINTED sessionId', async () => {
+         // Why: buildPtyHostEnv has filesystem side-effects, so a minted id's per-PTY state must be cleared if provider.spawn later fails.
+@@ -419,7 +406,6 @@ describe('registerPtyHandlers', () => {
+         expect(spawnOptions.paneKey).toBe(makePaneKey('tab-1', leafId))
+         expect(spawnOptions.tabId).toBe('tab-1')
+         expect(openCodeBuildPtyEnvMock).not.toHaveBeenCalled()
+-        expect(piBuildPtyEnvMock).not.toHaveBeenCalled()
+         expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+           expect.objectContaining({
+             targetId: 'ssh-1',
+diff --git a/src/main/ipc/pty-spawn-env-agent-overlays.test.ts b/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
+index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c03bf41cf3 100644
+--- a/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
++++ b/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
+@@ -241,44 +241,6 @@ describe('registerPtyHandlers', () => {
+         expect(env.OPENCODE_CONFIG_DIR).not.toBe(env.ORCA_OPENCODE_SOURCE_CONFIG_DIR)
+       }
+     )
+-    it('installs Pi managed extensions without redirecting Orca terminal PTY homes', async () => {
+-      const env = await spawnAndGetEnv(undefined, { PI_CODING_AGENT_DIR: '/tmp/user-pi-agent' })
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-        expect.any(String),
+-        '/tmp/user-pi-agent',
+-        'pi',
+-        {
+-          materializeDefaultHome: false
+-        }
+-      )
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(expect.any(String), undefined, 'omp', {
+-        materializeDefaultHome: false
+-      })
+-      expect(env.PI_CODING_AGENT_DIR).toBe('/tmp/user-pi-agent')
+-      expect(env.ORCA_PI_CODING_AGENT_DIR).toBeUndefined()
+-      expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBe('/tmp/user-pi-agent')
+-      expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
+-      expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+-        '/tmp/orca-user-data/omp-managed-status-extension/orca-agent-status.ts'
+-      )
+-      expect(env.ORCA_OMP_SOURCE_AGENT_DIR).toBeUndefined()
+-    })
+-    it('does not materialize a missing Pi home when another agent mentions Pi', async () => {
+-      const env = await spawnAndGetEnv(
+-        undefined,
+-        undefined,
+-        undefined,
+-        undefined,
+-        'codex "ask about pi"',
+-        'codex'
+-      )
+-
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledTimes(1)
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(expect.any(String), undefined, 'pi', {
+-        materializeDefaultHome: false
+-      })
+-      expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBeUndefined()
+-    })
+     it('materializes Pi home for an explicit Pi launch through a custom command', async () => {
+       const env = await spawnAndGetEnv(
+         undefined,
+@@ -308,12 +270,6 @@ describe('registerPtyHandlers', () => {
+         undefined,
+         command
+       )
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-        expect.any(String),
+-        '/tmp/user-omp-agent',
+-        'omp',
+-        { materializeDefaultHome: true }
+-      )
+       expect(env.PI_CODING_AGENT_DIR).toBe('/tmp/user-omp-agent')
+       expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
+       expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+@@ -361,12 +317,6 @@ describe('registerPtyHandlers', () => {
+         'powershell wait-wrapper'
+       )
+ 
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-        expect.any(String),
+-        '/tmp/user-omp-agent',
+-        'omp',
+-        { materializeDefaultHome: true }
+-      )
+       expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+         '/tmp/user-omp-agent/extensions/orca-agent-status.ts'
+       )
+@@ -376,15 +326,7 @@ describe('registerPtyHandlers', () => {
+       const env = await spawnAndGetEnv({
+         PI_CODING_AGENT_DIR: '/tmp/parent-orca-pi-overlay',
+         ORCA_PI_SOURCE_AGENT_DIR: '/tmp/user-pi-agent'
+-      })
+-      expect(piBuildPtyEnvMock).toHaveBeenCalledWith(
+-        expect.any(String),
+-        '/tmp/user-pi-agent',
+-        'pi',
+-        {
+-          materializeDefaultHome: false
+-        }
+-      )
++      }, undefined, undefined, undefined, 'pi', 'pi')
+       expect(env.PI_CODING_AGENT_DIR).toBe('/tmp/parent-orca-pi-overlay')
+       expect(env.ORCA_PI_CODING_AGENT_DIR).toBeUndefined()
+       expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBe('/tmp/user-pi-agent')
+diff --git a/src/main/ipc/pty/host-env/assembly.ts b/src/main/ipc/pty/host-env/assembly.ts
+index b5daa5bed7f0dd7ed8e2c42a8fcd1904821e7e29..85b68c6dd3e9ba7434209803be54d8d39d6f7229 100644
+--- a/src/main/ipc/pty/host-env/assembly.ts
++++ b/src/main/ipc/pty/host-env/assembly.ts
+@@ -167,12 +167,9 @@ export function buildPtyHostEnv(
+     clearPiAgentShadowEnv(baseEnv, 'pi')
+     clearPiAgentShadowEnv(baseEnv, 'omp')
+     clearPiAgentShadowEnv(baseEnv, 'prime-agent')
+-    // Why: bare shells historically defaulted to Pi + OMP shadow prep and
+-    // created ~/.<agent>/agent even when the user never launches those agents
+-    // (#10196). Only create default homes on an explicit Pi/OMP launch;
+-    // otherwise install only into an existing agent dir (or userData for OMP
+-    // status so a typed `omp` still gets the shell wrapper extension).
+-    if (shouldInstallPiExtensions && piAgentKind === 'pi') {
++    // Non-agent panes must not rewrite a shared Pi/OMP home. Bare shells still
++    // receive the explicit OMP fallback for a later typed launch.
++    if (shouldInstallPiExtensions && explicitPiAgentKind === 'pi') {
+       const piEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir, 'pi', {
+         materializeDefaultHome: explicitPiAgentKind === 'pi'
+       })
+@@ -183,6 +180,7 @@ export function buildPtyHostEnv(
+     if (shouldInstallOmpExtensions && shouldPrepareOmpShadow) {
+       const ompEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingOmpAgentDir, 'omp', {
+         materializeDefaultHome: explicitPiAgentKind === 'omp',
++        installInAgentHome: explicitPiAgentKind === 'omp',
+         // WSL loads the host-rooted managed extension through drvfs; guest storage stays separate.
+         ...(opts.isWsl
+           ? { configDirName: '.omp' }
+diff --git a/src/main/pi/agent-status-extension-source.test.ts b/src/main/pi/agent-status-extension-source.test.ts
+index 5ecee4fb0f25e81aba0c97809328341ed46c4dc5..5144e7d6028dcc29b4a5db5d1cd3cccf81ac57cb 100644
+--- a/src/main/pi/agent-status-extension-source.test.ts
++++ b/src/main/pi/agent-status-extension-source.test.ts
+@@ -575,6 +575,34 @@ describe('getPiAgentStatusExtensionSource', () => {
+       vi.useRealTimers()
+     }
+   })
++  it('uses and clears the issuing host timer for a Pi completion recheck', async () => {
++    const h = createHarness({ kind: 'pi' })
++    const scheduled: { fn: () => void; ms: number }[] = []
++    const clearTimer = vi.fn()
++    let idle = false
++    const ctx = {
++      isIdle: () => idle,
++      setTimeout: (fn: () => void, ms: number) => {
++        const timer = { fn, ms }
++        scheduled.push(timer)
++        return timer
++      },
++      clearTimer
++    }
++    await h.callHook('agent_start')
++    await h.callHook('agent_end', {}, ctx)
++    expect(scheduled[0].ms).toBe(0)
++    scheduled[0].fn()
++    expect(scheduled[1].ms).toBe(25)
++    await h.callHook('agent_start')
++    expect(clearTimer).toHaveBeenCalledExactlyOnceWith(scheduled[1])
++    await h.callHook('agent_end', {}, ctx)
++    idle = true
++    scheduled[2].fn()
++    for (let tick = 0; tick < 20; tick++) await Promise.resolve()
++    expect(JSON.parse(h.fetchMock.mock.calls.at(-1)![1].body).payload.hook_event_name).toBe('agent_end')
++  })
++
+ 
+   it('reports only agent_settled after multiple first-run agent_end events', async () => {
+     vi.useFakeTimers()
+diff --git a/src/main/pi/agent-status-extension-source.ts b/src/main/pi/agent-status-extension-source.ts
+index bdf9061779c7fb618f26348ab38ea76bce682c65..a43a1b9d0f92be304f47e2994565711ffc6020f0 100644
+--- a/src/main/pi/agent-status-extension-source.ts
++++ b/src/main/pi/agent-status-extension-source.ts
+@@ -22,10 +22,11 @@ export const ORCA_PI_AGENT_STATUS_EXTENSION_FILE = 'orca-agent-status.ts'
+  *  dir: it POSTs lifecycle, tool, and (under OMP) model events to Orca's hook
+  *  endpoint. Returned as one self-contained string — it runs inside the agent. */
+ export function getPiAgentStatusExtensionSource(kind: PiAgentKind = 'pi'): string {
++  // Shared Pi/OMP homes must receive identical bytes; only Prime has a separate contract.
++  kind = kind === 'prime-agent' ? kind : 'pi'
+   // OMP resumes by id; its persistent file path lets native chat skip discovery.
+   const sessionMetadataSourceLines =
+-    kind !== 'omp'
+-      ? [
++    [
+           'let sessionMetadata: Record<string, unknown> = {}',
+           'let runtimeOmpSessionMetadata: Record<string, unknown> = {}',
+           '',
+@@ -66,28 +67,7 @@ export function getPiAgentStatusExtensionSource(kind: PiAgentKind = 'pi'): strin
+           '  }',
+           '}',
+           ''
+-        ]
+-      : [
+-          'let sessionMetadata: Record<string, unknown> = {}',
+-          '',
+-          'function updateSessionMetadata(ctx: unknown): void {',
+-          '  const sessionManager = (ctx as { sessionManager?: { getSessionId?: () => unknown; getSessionFile?: () => unknown } } | null)?.sessionManager',
+-          '  const sessionId = sessionManager?.getSessionId?.()',
+-          '  const sessionFile = sessionManager?.getSessionFile?.()',
+-          "  sessionMetadata = typeof sessionId === 'string' && sessionId && typeof sessionFile === 'string' && sessionFile ? { session_id: sessionId, session_file: sessionFile } : {}",
+-          '  trackModelSession(sessionMetadata.session_id)', 
+-          '}',
+-          '',
+-          'function updateRuntimeOmpSessionMetadata(ctx: unknown): void {',
+-          '  updateSessionMetadata(ctx)',
+-          '  updateModelMetadata(ctx)',
+-          '}',
+-          '',
+-          'function getPostSessionMetadata(_ompRuntime: boolean): Record<string, unknown> {',
+-          '  return { ...sessionMetadata, ...modelMetadata }',
+-          '}',
+-          ''
+-        ]
++    ]
+   // Why: OMP emits no model_select of its own, so the active model is re-read from
+   // the event context on every post; the pane's status then always carries it.
+   // Reported only under the OMP runtime — Pi has no chat surface consuming it yet.
+@@ -121,10 +101,7 @@ export function getPiAgentStatusExtensionSource(kind: PiAgentKind = 'pi'): strin
+   ]
+ 
+   // Why: Pi resumes from an existing transcript; OMP resumes directly by session id (#8962).
+-  const payloadLine =
+-    kind !== 'omp'
+-      ? '    payload: { hook_event_name: hookEventName, ...(ompRuntime ? metadata : getPersistedSessionMetadata()), ...extra },'
+-      : '    payload: { hook_event_name: hookEventName, ...metadata, ...extra },'
++  const payloadLine = '    payload: { hook_event_name: hookEventName, ...(ompRuntime ? metadata : getPersistedSessionMetadata()), ...extra },'
+ 
+   // Why: keep this string self-contained — it runs inside the pi process,
+   // so it cannot import from Orca's main bundle. fs/http coords come from
+diff --git a/src/main/pi/agent-status-extension-test-harness.ts b/src/main/pi/agent-status-extension-test-harness.ts
+index 0c07caf8256e7547f91c2966b475dbb1ed24dba1..897c6cc6f73fa0761c4d10ebb86b392df7fa48f6 100644
+--- a/src/main/pi/agent-status-extension-test-harness.ts
++++ b/src/main/pi/agent-status-extension-test-harness.ts
+@@ -10,6 +10,8 @@ export type HookContext = {
+   hasUI?: boolean
+   ui?: { setEditorText?: (text: string) => void; notify?: (message: string, level: string) => void }
+   isIdle?: () => boolean
++  setTimeout?: (fn: () => void, ms: number) => unknown
++  clearTimer?: (timer: unknown) => void
+   model?: { provider?: unknown; id?: unknown } | null
+   modelRegistry?: { getAvailable: () => { provider: string; id: string }[] }
+   sessionManager?: {
+@@ -51,6 +53,7 @@ export type AgentStatusExtensionHarness = {
+   // Re-invoke the extension factory in the same process (as Pi does on an
+   // in-process extension reload), swapping in the freshly registered handlers.
+   reload: () => void
++  loadCopy: (source?: string) => Record<string, HookHandler>
+ }
+ 
+ const BASE_ENV = {
+@@ -80,6 +83,7 @@ export function createAgentStatusExtensionHarness(args: {
+   statSync?: (path: string) => { mtimeMs: number; size: number; ino: number }
+   curlExitCode?: number | null
+   fetchImpl?: (...params: Parameters<typeof fetch>) => Promise<unknown>
++  source?: string
+ }): AgentStatusExtensionHarness {
+   const fetchMock = vi.fn(
+     args.fetchImpl ??
+@@ -155,8 +159,8 @@ export function createAgentStatusExtensionHarness(args: {
+       ...args.env
+     },
+     pid: args.pid ?? AGENT_STATUS_EXTENSION_SELF_PID,
+-    title: args.title ?? 'node',
+-    argv: args.argv ?? ['node', '/usr/bin/orca']
++    title: args.title ?? (args.kind === 'omp' ? 'omp' : 'node'),
++    argv: args.argv ?? ['node', args.kind === 'omp' ? '/opt/omp/bin/omp' : '/usr/bin/orca']
+   }
+ 
+   const context = {
+@@ -179,14 +183,14 @@ export function createAgentStatusExtensionHarness(args: {
+   } as Record<string, unknown>
+   context.globalThis = context
+ 
+-  const source = getPiAgentStatusExtensionSource(args.kind)
++  const source = args.source ?? getPiAgentStatusExtensionSource(args.kind)
+   const output = ts.transpileModule(source, {
+     compilerOptions: {
+       module: ts.ModuleKind.CommonJS,
+       target: ts.ScriptTarget.ES2020
+     }
+   }).outputText
+-  runInNewContext(output, context)
++  runInNewContext(`(function(module, exports) { ${output}\n})(module, module.exports)`, context)
+ 
+   const register = module.exports.default
+   if (!register) {
+@@ -197,15 +201,18 @@ export function createAgentStatusExtensionHarness(args: {
+   const piEvents = new EventEmitter()
+   const commands: AgentStatusExtensionHarness['commands'] = {}
+   const setModelMock = vi.fn(async (_model: unknown) => true)
+-  const registerInto = (target: Record<string, HookHandler>): void => {
+-    register({
++  const registerInto = (target: Record<string, HookHandler>, factory = register!): void => {
++    factory({
+       registerCommand: (name, command) => {
+         commands[name] = command
+       },
+       setModel: setModelMock,
+       events: piEvents,
+       on(name: string, handler: HookHandler) {
+-        target[name] = handler
++        const previous = target[name]
++        target[name] = previous
++          ? async (event, ctx) => { await previous(event, ctx); await handler(event, ctx) }
++          : handler
+       }
+     })
+   }
+@@ -228,6 +235,18 @@ export function createAgentStatusExtensionHarness(args: {
+       piEvents.emit(name, event)
+     },
+     piEventListenerCount: (name) => piEvents.listenerCount(name),
++    loadCopy: (copySource = source) => {
++      const copyModule = { exports: {} as typeof module.exports }
++      const copyOutput = ts.transpileModule(copySource, {
++        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
++      }).outputText
++      context.module = copyModule
++      context.exports = copyModule.exports
++      runInNewContext(`(function(module, exports) { ${copyOutput}\n})(module, module.exports)`, context)
++      const copyHandlers: Record<string, HookHandler> = {}
++      registerInto(copyHandlers, copyModule.exports.default!)
++      return copyHandlers
++    },
+     reload: () => {
+       for (const key of Object.keys(handlers)) {
+         delete handlers[key]
+diff --git a/src/main/pi/agent-status-handler-source.ts b/src/main/pi/agent-status-handler-source.ts
+index a88490cf6aefc3ac9ad6b99bde43e07908c4b7f6..7a01e8ee499fae8f61e5bed64efb1a4f09e272a4 100644
+--- a/src/main/pi/agent-status-handler-source.ts
++++ b/src/main/pi/agent-status-handler-source.ts
+@@ -12,20 +12,17 @@ import {
+ // Why: keep the generated handler registrations separate from hook transport;
+ // both are independently sizeable and the installed extension concatenates them.
+ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[] {
+-  const sessionStartHandler =
+-    kind !== 'omp'
+-      ? [
++  const sessionStartHandler = [
+           "  onStatus('session_start', (event, ctx) => {",
+           '    updateSessionMetadata(ctx)',
+           ...(kind === 'pi' ? ['    piUiPromptDepth = 0'] : []),
+           '    // Why: /reload re-registers the active session, but it is not a',
+           '    // turn boundary and must not clear the visible status or unread state.',
+-          "    if (event.reason === 'reload') return",
++          "    if (isOmpRuntime() || event?.reason === 'reload') return",
+           "    post('session_start')",
+           '  })',
+           ''
+         ]
+-      : []
+ 
+   // Why: OMP can switch sessions in-process, so each latest-only post needs fresh identity.
+   const ctxParam = ', ctx'
+@@ -74,7 +71,7 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     kind === 'prime-agent'
+       ? []
+       : [
+-          `  pi.on('model_select', (event${ctxParam}) => {`,
++          `  onStatus('model_select', (event${ctxParam}) => {`,
+           ...captureSessionMetadata,
+           '    if (!isOmpRuntime()) return',
+           '    updateModelMetadata(event)',
+@@ -134,11 +131,9 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     `  process.env.${ownerEnv} = selfPid`,
+     '  resetPostQueue()',
+     ...getPiSubagentRosterSetupSourceLines(),
+-    ...(kind !== 'pi'
+-      ? [
+-          "  pi.on('session_shutdown', () => { lifecycleState.active.clear(); lifecycleState.exited?.clear(); lifecycleState.waiting = false; resetPostQueue(); clearPendingAgentEndCheck() })"
+-        ]
+-      : []),
++    ...(kind === 'prime-agent'
++      ? ["  pi.on('session_shutdown', () => { lifecycleState.active.clear(); lifecycleState.exited?.clear(); lifecycleState.waiting = false; resetPostQueue(); clearPendingAgentEndCheck() })"]
++      : ["  pi.on('session_shutdown', () => { if (!isOmpRuntime()) return; lifecycleState.active.clear(); lifecycleState.exited?.clear(); lifecycleState.waiting = false; resetPostQueue(); clearPendingAgentEndCheck() })"]),
+     ...(kind !== 'prime-agent'
+       ? [
+           "  pi.on('session_switch', (_event, ctx) => {",
+@@ -155,7 +150,7 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     ...getOmpSessionOwnerHandlerSourceLines(),
+     ...getOmpModelCommandSourceLines(),
+     ...sessionStartHandler,
+-    ...(kind === 'omp' ? getPiPrefillHandlerSourceLines('omp', true) : []),
++    ...(kind !== 'prime-agent' ? getPiPrefillHandlerSourceLines(true) : []),
+     `  onStatus('before_agent_start', (event${ctxParam}) => {`,
+     ...captureSessionMetadata,
+     "    post('before_agent_start', { prompt: event.prompt ?? '' })",
+@@ -227,11 +222,18 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     '  let endedRunGeneration = 0',
+     '  let completionPostedGeneration = -1',
+     '  let agentEndIdleRecheckMs = AGENT_END_IDLE_RECHECK_MS',
+-    '  let pendingAgentEndCheck: ReturnType<typeof setTimeout> | null = null',
+-    '  let pendingAgentEndContext: { isIdle: () => boolean } | null = null',
++    '  let pendingAgentEndCheck = null',
++    '  let pendingAgentEndTimerHost = null',
++    '  let pendingAgentEndContext = null',
+     '',
+     '  function clearPendingAgentEndCheck(): void {',
+-    '    if (pendingAgentEndCheck !== null) clearTimeout(pendingAgentEndCheck)',
++    '    if (pendingAgentEndCheck !== null) {',
++    '      try {',
++    '        if (pendingAgentEndTimerHost) pendingAgentEndTimerHost.clearTimer?.(pendingAgentEndCheck)',
++    '        else clearTimeout(pendingAgentEndCheck)',
++    '      } catch {}',
++    '    }',
++    '    pendingAgentEndTimerHost = null',
+     '    pendingAgentEndCheck = null',
+     '    pendingAgentEndContext = null',
+     '  }',
+@@ -269,8 +271,13 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     '      pendingAgentEndContext = null',
+     '      return',
+     '    }',
+-    '    pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, agentEndIdleRecheckMs)',
+-    "    if (typeof pendingAgentEndCheck.unref === 'function') pendingAgentEndCheck.unref()",
++    "    if (typeof ctx.setTimeout === 'function') {",
++    '      pendingAgentEndTimerHost = ctx',
++    '      pendingAgentEndCheck = ctx.setTimeout(checkPendingAgentEnd, agentEndIdleRecheckMs)',
++    '    } else {',
++    '      pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, agentEndIdleRecheckMs)',
++    "      if (typeof pendingAgentEndCheck?.unref === 'function') pendingAgentEndCheck.unref()",
++    '    }',
+     '    agentEndIdleRecheckMs = Math.min(agentEndIdleRecheckMs * 2, AGENT_END_IDLE_RECHECK_MAX_MS)',
+     '  }',
+     '',
+@@ -300,8 +307,13 @@ export function getPiAgentStatusHandlerSourceLines(kind: PiAgentKind): string[]
+     '    clearPendingAgentEndCheck()',
+     '    agentEndIdleRecheckMs = AGENT_END_IDLE_RECHECK_MS',
+     '    pendingAgentEndContext = ctx',
+-    '    pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, 0)',
+-    "    if (typeof pendingAgentEndCheck.unref === 'function') pendingAgentEndCheck.unref()",
++    "    if (typeof ctx.setTimeout === 'function') {",
++    '      pendingAgentEndTimerHost = ctx',
++    '      pendingAgentEndCheck = ctx.setTimeout(checkPendingAgentEnd, 0)',
++    '    } else {',
++    '      pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, 0)',
++    "      if (typeof pendingAgentEndCheck?.unref === 'function') pendingAgentEndCheck.unref()",
++    '    }',
+     '  })',
+     '}',
+     ''
+diff --git a/src/main/pi/agent-status-runtime-detection-source.ts b/src/main/pi/agent-status-runtime-detection-source.ts
+index 6ba5edb69b916ce238ab1fc8b5da2807a74ce6d7..4f0b9c341a1350fb61c3e7d34f4bb12b9fb148bb 100644
+--- a/src/main/pi/agent-status-runtime-detection-source.ts
++++ b/src/main/pi/agent-status-runtime-detection-source.ts
+@@ -14,10 +14,6 @@ export function getPiOmpRuntimeDetectionSourceLines(configuredHookPath: string):
+     '',
+     'function isOmpRuntime(): boolean {',
+     '  if (cachedOmpRuntime !== null) return cachedOmpRuntime',
+-    "  if (CONFIGURED_HOOK_PATH === '/hook/omp') {",
+-    '    cachedOmpRuntime = true',
+-    '    return true',
+-    '  }',
+     '  const executableNames = [',
+     '    processName(process.title),',
+     '    processName(process.env._),',
+@@ -48,7 +44,7 @@ export function getPiAgentStatusRuntimeDetectionSourceLines(kind: PiAgentKind):
+   }
+ 
+   return [
+-    ...getPiOmpRuntimeDetectionSourceLines(`/hook/${kind}`),
++    ...getPiOmpRuntimeDetectionSourceLines('/hook/pi'),
+     '',
+     'function resolveHookPath(ompRuntime: boolean): string {',
+     '  // Why: runtime detection keeps a bare-shell OMP launch from reporting as Pi.',
+diff --git a/src/main/pi/prefill-extension-source.test.ts b/src/main/pi/prefill-extension-source.test.ts
+index 9e36edd69bfdb9f58fbdd766dc1e80fb557c9396..5aac09bcc3e247571f24dbacacb53c0e2c68078a 100644
+--- a/src/main/pi/prefill-extension-source.test.ts
++++ b/src/main/pi/prefill-extension-source.test.ts
+@@ -1,14 +1,39 @@
+-import { describe, expect, it } from 'vitest'
++import { runInNewContext } from 'node:vm'
++import ts from 'typescript-api'
++import { describe, expect, it, vi } from 'vitest'
+ import { getPiPrefillExtensionSource } from './prefill-extension-source'
+ 
+-describe('getPiPrefillExtensionSource', () => {
+-  it('accepts OMP session_start events without a reason field', () => {
+-    const source = getPiPrefillExtensionSource('omp')
+-    expect(source).toContain('process.env.ORCA_OMP_PREFILL')
+-    expect(source).not.toContain("event.reason !== 'startup'")
++function harness(kind: 'pi' | 'omp', runtime: 'pi' | 'omp') {
++  const env: Record<string, string | undefined> = {
++    ORCA_PANE_KEY: 'pane', ORCA_PI_PREFILL: 'Pi draft', ORCA_OMP_PREFILL: 'OMP draft'
++  }
++  const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<void>> = {}
++  const module = { exports: {} as { default?: (pi: unknown) => void } }
++  runInNewContext(ts.transpileModule(getPiPrefillExtensionSource(kind), {
++    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
++  }).outputText, { module, exports: module.exports, process: { env, title: runtime, argv: ['bun', runtime] } })
++  module.exports.default!({ on: (name: string, handler: typeof handlers[string]) => { handlers[name] = handler } })
++  const setEditorText = vi.fn()
++  return { env, setEditorText, start: (reason?: string) => handlers.session_start({ reason }, { ui: { setEditorText } }) }
++}
++
++describe('kind-neutral prefill', () => {
++  it.each(['pi', 'omp'] as const)('retains the OMP draft after a %s render without submitting it', async (kind) => {
++    const h = harness(kind, 'omp')
++    await h.start()
++    await h.start()
++    expect(h.setEditorText).toHaveBeenCalledExactlyOnceWith('OMP draft')
++    expect(h.env.ORCA_OMP_PREFILL).toBeUndefined()
++    expect(h.env.ORCA_PI_PREFILL).toBe('Pi draft')
+   })
+ 
+-  it('keeps Pi startup reason filtering', () => {
+-    expect(getPiPrefillExtensionSource('pi')).toContain("event.reason !== 'startup'")
++  it.each(['pi', 'omp'] as const)('filters non-startup Pi sessions after a %s render', async (kind) => {
++    const h = harness(kind, 'pi')
++    await h.start('reload')
++    expect(h.setEditorText).not.toHaveBeenCalled()
++    expect(h.env.ORCA_PI_PREFILL).toBe('Pi draft')
++    await h.start('startup')
++    expect(h.setEditorText).toHaveBeenCalledExactlyOnceWith('Pi draft')
++    expect(h.env.ORCA_OMP_PREFILL).toBe('OMP draft')
+   })
+ })
+diff --git a/src/main/pi/prefill-extension-source.ts b/src/main/pi/prefill-extension-source.ts
+index 81414fed67a7bb3559b61a0cf8d6f1e0fe655428..127295a7a762286db4c678baf7956df7aeebe45d 100644
+--- a/src/main/pi/prefill-extension-source.ts
++++ b/src/main/pi/prefill-extension-source.ts
+@@ -1,4 +1,5 @@
+ import type { PiAgentKind } from '../../shared/pi-agent-kind'
++import { getPiOmpRuntimeDetectionSourceLines } from './agent-status-runtime-detection-source'
+ 
+ export const ORCA_PI_PREFILL_EXTENSION_FILE = 'orca-prefill.ts'
+ 
+@@ -7,30 +8,31 @@ export const ORCA_PI_PREFILL_EXTENSION_FILE = 'orca-prefill.ts'
+ // OMP PTY never honors a Pi draft (or vice versa).
+ type PrefillAgentKind = Exclude<PiAgentKind, 'prime-agent'>
+ 
+-const PREFILL_ENV_VAR_BY_KIND: Record<PrefillAgentKind, string> = {
+-  pi: 'ORCA_PI_PREFILL',
+-  omp: 'ORCA_OMP_PREFILL'
+-}
+-
+-export function getPiPrefillExtensionSource(kind: PrefillAgentKind): string {
+-  return ['export default function (pi) {', ...getPiPrefillHandlerSourceLines(kind), '}', ''].join(
+-    '\n'
+-  )
++export function getPiPrefillExtensionSource(_kind: PrefillAgentKind): string {
++  // Pi and OMP may share one extension directory; launch order must not choose draft semantics.
++  return [
++    ...getPiOmpRuntimeDetectionSourceLines('/hook/pi'),
++    '',
++    'export default function (pi) {',
++    ...getPiPrefillHandlerSourceLines(),
++    '}',
++    ''
++  ].join('\n')
+ }
+ 
+ export function getPiPrefillHandlerSourceLines(
+-  kind: PrefillAgentKind,
+   wrapInStatusOwner = false
+ ): string[] {
+-  const envVar = PREFILL_ENV_VAR_BY_KIND[kind]
+-  const register = wrapInStatusOwner && kind === 'omp' ? 'onStatus' : 'pi.on'
++  const register = wrapInStatusOwner ? 'onStatus' : 'pi.on'
+   return [
+     `  ${register}('session_start', async (event, ctx) => {`,
+     '    if (!process.env.ORCA_PANE_KEY || ctx?.hasUI === false) return',
+-    ...(kind === 'pi' ? ["    if (event.reason !== 'startup') return"] : []),
+-    `    const prefill = process.env.${envVar}`,
++    ...(wrapInStatusOwner ? ['    if (!isOmpRuntime()) return'] : []),
++    "    if (!isOmpRuntime() && event?.reason !== 'startup') return",
++    "    const envVar = isOmpRuntime() ? 'ORCA_OMP_PREFILL' : 'ORCA_PI_PREFILL'",
++    '    const prefill = process.env[envVar]',
+     "    if (!prefill || typeof ctx?.ui?.setEditorText !== 'function') return",
+-    `    delete process.env.${envVar}`,
++    '    delete process.env[envVar]',
+     '    try {',
+     '      ctx.ui.setEditorText(prefill)',
+     '    } catch {}',
+diff --git a/src/main/pi/titlebar-extension-lifetime-source.ts b/src/main/pi/titlebar-extension-lifetime-source.ts
+index 1d7c4abd304e9d924b140cc59cc7304f033160a3..38816f7f4239dbe4129df06663ae2db6a793e411 100644
+--- a/src/main/pi/titlebar-extension-lifetime-source.ts
++++ b/src/main/pi/titlebar-extension-lifetime-source.ts
+@@ -7,6 +7,8 @@ export function getPiTitlebarLifetimeSourceLines(): string[] {
+     '  owners.get(paneKey)?.()',
+     '  let disposed = false',
+     '  function clearOwnedTimers() {',
++    '    turnActive = false',
++    '    clearInputExpiry()',
+     '    clearPendingAgentEndCheck()',
+     '    clearAnimation()',
+     '    stopMarkerReassert()',
+diff --git a/src/main/pi/titlebar-extension-service.test.ts b/src/main/pi/titlebar-extension-service.test.ts
+index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28e0636e38 100644
+--- a/src/main/pi/titlebar-extension-service.test.ts
++++ b/src/main/pi/titlebar-extension-service.test.ts
+@@ -18,6 +18,16 @@ import type * as osModule from 'node:os'
+ import type * as fsModule from 'node:fs'
+ import { join } from 'node:path'
+ import { installFakeAppEnvironment } from '../../../config/scripts/vitest-host-ports-setup'
++import { runInNewContext } from 'node:vm'
++import ts from 'typescript-api'
++import { createAgentStatusExtensionHarness } from './agent-status-extension-test-harness'
++import { buildPtyHostEnv } from '../ipc/pty/host-env/assembly'
++
++vi.mock('../opencode/hook-service', () => ({
++  openCodeHookService: { buildPtyEnv: () => ({}) },
++  openCode2HookService: { buildPtyEnv: () => ({}) }
++}))
++vi.mock('../agent-hooks/server', () => ({ agentHookServer: { buildPtyEnv: () => ({}) } }))
+ 
+ // The service calls app.getPath('userData') for its overlay root. Point that
+ // at a real tmp dir so we can exercise the filesystem behavior end-to-end.
+@@ -39,7 +49,6 @@ vi.mock('os', async (importOriginal) => {
+ })
+ 
+ import { PiTitlebarExtensionService, isSafeDescendCandidate } from './titlebar-extension-service'
+-import { getPiTitlebarExtensionSource } from './titlebar-extension-source'
+ 
+ function legacyOverlayPath(kind: 'pi' | 'omp', ptyId: string): string {
+   const rootDir = kind === 'pi' ? 'pi-agent-overlays' : 'omp-agent-overlays'
+@@ -191,6 +200,72 @@ describe('PiTitlebarExtensionService', () => {
+     })
+   }
+ 
++  it.each([undefined, 'claude'] as const)('does not rewrite a shared OMP extension home for non-agent launch %s', (launchAgent) => {
++    const extensions = join(piHome, 'extensions')
++    const filenames = ['orca-agent-status.ts', 'orca-prefill.ts', 'orca-titlebar-spinner.ts']
++    for (const filename of filenames) writeFileSync(join(extensions, filename), '// @orca-managed-pi-extension\nExisting managed file')
++    buildPtyHostEnv('non-agent', { PI_CODING_AGENT_DIR: piHome }, {
++      launchAgent, launchCommand: launchAgent, agentStatusHooksEnabled: true,
++      isPackaged: false, userDataPath: userDataDir, selectedCodexHomePath: null
++    })
++    for (const filename of filenames) expect(readFileSync(join(extensions, filename), 'utf8')).toBe('// @orca-managed-pi-extension\nExisting managed file')
++  })
++
++  it('keeps the OMP draft when Pi spawned last into the shared home', async () => {
++    const service = new PiTitlebarExtensionService()
++    service.buildPtyEnv('omp-first', piHome, 'omp')
++    const files = ['orca-agent-status.ts', 'orca-prefill.ts', 'orca-titlebar-spinner.ts']
++    const before = files.map((filename) => readFileSync(join(piHome, 'extensions', filename), 'utf8'))
++    service.buildPtyEnv('pi-last', piHome, 'pi')
++    expect(files.map((filename) => readFileSync(join(piHome, 'extensions', filename), 'utf8'))).toEqual(before)
++    const env: Record<string, string | undefined> = { ORCA_PANE_KEY: 'draft-pane', ORCA_OMP_PREFILL: 'Retained OMP draft', ORCA_PI_PREFILL: 'Unrelated Pi draft' }
++    const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<void>> = {}
++    const module = { exports: {} as { default?: (pi: unknown) => void } }
++    runInNewContext(ts.transpileModule(readFileSync(join(piHome, 'extensions', 'orca-prefill.ts'), 'utf8'), {
++      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
++    }).outputText, { module, exports: module.exports, process: { env, title: 'omp', argv: ['bun', 'omp'] } })
++    module.exports.default!({ on: (name: string, handler: typeof handlers[string]) => { handlers[name] = handler } })
++    const setEditorText = vi.fn()
++    await handlers.session_start({}, { ui: { setEditorText } })
++    expect(setEditorText).toHaveBeenCalledExactlyOnceWith('Retained OMP draft')
++    expect(env.ORCA_PI_PREFILL).toBe('Unrelated Pi draft')
++  })
++
++  it.each([false, true])('pins OMP path-only loader effects when user-owned status is %s', async (userOwned) => {
++    const service = new PiTitlebarExtensionService()
++    service.buildPtyEnv('seed-pi', piHome, 'pi')
++    const ownedPath = join(piHome, 'extensions', 'orca-agent-status.ts')
++    if (userOwned) {
++      // A user copy opts out of managed replacement but still posts real session hooks.
++      writeFileSync(ownedPath, readFileSync(ownedPath, 'utf8').split('\n').slice(1).join('\n'))
++    }
++    const original = readFileSync(ownedPath, 'utf8')
++    const env = service.buildPtyEnv('spawn-omp', piHome, 'omp')
++    expect(readFileSync(ownedPath, 'utf8')).toBe(original)
++    const paths = [...new Set([ownedPath, env.ORCA_OMP_STATUS_EXTENSION!])]
++    const h = createAgentStatusExtensionHarness({ kind: 'omp', source: readFileSync(paths[0], 'utf8') })
++    const factories = [h.handlers, ...paths.slice(1).map((path) => h.loadCopy(readFileSync(path, 'utf8')))]
++    const root = { sessionManager: { getSessionId: () => 'root-session', getSessionFile: () => '/sessions/root.jsonl' }, model: { provider: 'synthetic', id: 'model' } }
++    for (const hooks of factories) {
++      await hooks.session_start({}, root)
++      await hooks.agent_start({}, root)
++      for (let tick = 0; tick < 20; tick++) await Promise.resolve()
++    }
++    const payloads = h.fetchMock.mock.calls.map((call) => JSON.parse(call[1].body).payload)
++    expect(payloads).toEqual(Array.from({ length: userOwned ? 2 : 1 }, () => ({ hook_event_name: 'agent_start', session_id: 'root-session', session_file: '/sessions/root.jsonl', model: 'synthetic/model', model_switch_command: 'orca-model' })))
++  })
++
++  it.each(['orca-agent-status.ts', 'orca-prefill.ts', 'orca-titlebar-spinner.ts'])(
++    'preserves the user-owned %s across Pi and OMP launches', (filename) => {
++      const path = join(piHome, 'extensions', filename)
++      writeFileSync(path, 'User-owned extension bytes')
++      const service = new PiTitlebarExtensionService()
++      service.buildPtyEnv('user-pi', piHome, 'pi')
++      service.buildPtyEnv('user-omp', piHome, 'omp')
++      expect(readFileSync(path, 'utf8')).toBe('User-owned extension bytes')
++    }
++  )
++
+   it('buildPtyEnv installs Orca extensions into the user agent dir without redirecting the home', () => {
+     const svc = new PiTitlebarExtensionService()
+     const env = svc.buildPtyEnv('pty-1', piHome, 'pi')
+@@ -204,26 +279,6 @@ describe('PiTitlebarExtensionService', () => {
+       'orca-titlebar-spinner.ts',
+       'user-ext'
+     ])
+-    const statusExtensionSource = readFileSync(
+-      join(piHome, 'extensions', 'orca-agent-status.ts'),
+-      'utf-8'
+-    )
+-    const titlebarExtensionSource = readFileSync(
+-      join(piHome, 'extensions', 'orca-titlebar-spinner.ts'),
+-      'utf-8'
+-    )
+-    const prefillExtensionSource = readFileSync(
+-      join(piHome, 'extensions', 'orca-prefill.ts'),
+-      'utf-8'
+-    )
+-    expect(statusExtensionSource).toContain('@orca-managed-pi-extension')
+-    expect(statusExtensionSource).toContain('/hook/pi')
+-    expect(statusExtensionSource).toContain('process.title')
+-    expect(statusExtensionSource).toContain("return '/hook/omp'")
+-    expect(titlebarExtensionSource).toContain('@orca-managed-pi-extension')
+-    expect(titlebarExtensionSource).toContain('process.env.ORCA_PANE_KEY')
+-    expect(prefillExtensionSource).toContain('@orca-managed-pi-extension')
+-    expect(prefillExtensionSource).toContain('process.env.ORCA_PANE_KEY')
+     expectPiHomeIntact()
+   })
+ 
+@@ -245,9 +300,6 @@ describe('PiTitlebarExtensionService', () => {
+       'orca-agent-status.ts',
+       'user-ext'
+     ])
+-    const source = readFileSync(join(piHome, 'extensions', 'orca-agent-status.ts'), 'utf-8')
+-    expect(source).toContain('/hook/prime-agent')
+-    expect(source).not.toContain("return '/hook/omp'")
+     expect(existsSync(join(piHome, 'extensions', 'orca-titlebar-spinner.ts'))).toBe(false)
+     expect(existsSync(join(piHome, 'extensions', 'orca-prefill.ts'))).toBe(false)
+     expectPiHomeIntact()
+@@ -331,9 +383,6 @@ describe('PiTitlebarExtensionService', () => {
+     expect(
+       readFileSync(join(piHome, 'extensions', 'legacy-package', 'orca-prefill.ts'), 'utf-8')
+     ).toBe('user package file')
+-    expect(readFileSync(join(piHome, 'extensions', 'orca-agent-status.ts'), 'utf-8')).toContain(
+-      '/hook/omp'
+-    )
+     expect(readFileSync(join(overlayDir, '.orca-omp-overlay-migration-complete'), 'utf-8')).toBe(
+       'complete\n'
+     )
+@@ -531,15 +580,6 @@ describe('PiTitlebarExtensionService', () => {
+     expectPiHomeIntact()
+   })
+ 
+-  it('refreshes a managed spinner in an explicitly selected senpi home', () => {
+-    const agentDir = join(userDataDir, '.omo', 'agent')
+-    const extensionPath = join(agentDir, 'extensions', 'orca-titlebar-spinner.ts')
+-    mkdirSync(join(agentDir, 'extensions'), { recursive: true })
+-    writeFileSync(extensionPath, '// @orca-managed-pi-extension\nstale spinner')
+-    const svc = new PiTitlebarExtensionService()
+-    svc.buildPtyEnv('pty-senpi', agentDir, 'pi')
+-    expect(readFileSync(extensionPath, 'utf8')).toContain(getPiTitlebarExtensionSource())
+-  })
+ 
+   it('rebuilding updates Orca-owned extensions while preserving user files', () => {
+     const svc = new PiTitlebarExtensionService()
+@@ -557,9 +597,6 @@ describe('PiTitlebarExtensionService', () => {
+     const secondEnv = svc.buildPtyEnv('pty-refresh-2', piHome, 'pi')
+ 
+     expect(secondEnv.PI_CODING_AGENT_DIR).toBeUndefined()
+-    expect(readFileSync(join(piHome, 'extensions', 'orca-agent-status.ts'), 'utf-8')).toContain(
+-      '/hook/pi'
+-    )
+     expect(readFileSync(join(piHome, 'auth.json'), 'utf-8')).toBe('rotated token')
+     expect(readFileSync(join(piHome, 'extensions', 'new-ext', 'ext.ts'), 'utf-8')).toBe(
+       'new user extension'
+@@ -595,8 +632,6 @@ describe('PiTitlebarExtensionService', () => {
+     )
+     expect(readFileSync(userStatusPath, 'utf-8')).toBe(userStatusExtension)
+     expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(fallbackStatusPath)
+-    expect(readFileSync(fallbackStatusPath, 'utf-8')).toContain('@orca-managed-pi-extension')
+-    expect(readFileSync(fallbackStatusPath, 'utf-8')).toContain('/hook/omp')
+   })
+ 
+   it.skipIf(process.platform === 'win32')(
+@@ -615,9 +650,6 @@ describe('PiTitlebarExtensionService', () => {
+         expect(existsSync(join(realExtensionsDir, 'orca-agent-status.ts'))).toBe(true)
+         expect(existsSync(join(realExtensionsDir, 'orca-prefill.ts'))).toBe(true)
+         expect(existsSync(join(realExtensionsDir, 'orca-titlebar-spinner.ts'))).toBe(true)
+-        expect(readFileSync(join(realExtensionsDir, 'orca-agent-status.ts'), 'utf-8')).toContain(
+-          '/hook/pi'
+-        )
+       } finally {
+         rmSync(realExtensionsDir, { recursive: true, force: true })
+       }
+@@ -701,12 +733,6 @@ describe('PiTitlebarExtensionService', () => {
+         expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
+           join(fakeHome, '.omp', 'agent', 'extensions', 'orca-agent-status.ts')
+         )
+-        expect(
+-          readFileSync(
+-            join(fakeHome, '.omp', 'agent', 'extensions', 'orca-agent-status.ts'),
+-            'utf-8'
+-          )
+-        ).toContain('/hook/omp')
+         expect(
+           existsSync(join(fakeHome, '.pi', 'agent', 'extensions', 'orca-agent-status.ts'))
+         ).toBe(false)
+diff --git a/src/main/pi/titlebar-extension-service.ts b/src/main/pi/titlebar-extension-service.ts
+index 64a021603f7bba40af97ba19bd2a19176e1fdfa5..3e397eb706d14623e8ec075ead2903b5c3981a99 100644
+--- a/src/main/pi/titlebar-extension-service.ts
++++ b/src/main/pi/titlebar-extension-service.ts
+@@ -187,7 +187,7 @@ export class PiTitlebarExtensionService {
+     ptyId: string,
+     existingAgentDir: string | undefined,
+     kind: PiAgentKind,
+-    options?: { materializeDefaultHome?: boolean; configDirName?: string }
++    options?: { materializeDefaultHome?: boolean; configDirName?: string; installInAgentHome?: boolean }
+   ): Record<string, string> {
+     const freshConfigEnv = kind === 'omp' ? this.buildFreshOmpEnv() : {}
+     // The caller resolves the effective launch environment before this point.
+@@ -208,7 +208,7 @@ export class PiTitlebarExtensionService {
+     // homes on every open (#10196). Only materialize the default home when the
+     // caller opts in (explicit agent launch) or the dir already exists.
+     const materializeDefaultHome = options?.materializeDefaultHome !== false
+-    if (!existsSync(sourceAgentDir) && !materializeDefaultHome) {
++    if (options?.installInAgentHome === false || (!existsSync(sourceAgentDir) && !materializeDefaultHome)) {
+       if (kind === 'omp') {
+         const statusSource = withOrcaManagedExtensionMarker(getPiAgentStatusExtensionSource(kind))
+         const statusExtensionPath = this.writeOmpFallbackStatusExtension(statusSource)
+diff --git a/src/main/pi/titlebar-extension-source.test.ts b/src/main/pi/titlebar-extension-source.test.ts
+index b60eacc7be9bff4a841e22d43effd8d702a57e72..0b4f3effbcabcbafebaf5d88d653471b490e90fa 100644
+--- a/src/main/pi/titlebar-extension-source.test.ts
++++ b/src/main/pi/titlebar-extension-source.test.ts
+@@ -8,10 +8,14 @@ import type { PiAgentKind } from '../../shared/pi-agent-kind'
+ import { getPiTitlebarExtensionSource } from './titlebar-extension-source'
+ 
+ const BRAILLE_RE = /[⠀-⣿]/
++type ManagedTimer = { fn: () => void; ms: number; handle: NodeJS.Timeout; cleared: boolean }
+ 
+ type TitlebarContext = {
+   ui: { setTitle: (title: string) => void }
+   isIdle?: () => boolean
++  setInterval?: (fn: () => void, ms: number) => ManagedTimer
++  setTimeout?: (fn: () => void, ms: number) => ManagedTimer
++  clearTimer?: (timer: ManagedTimer) => void
+ }
+ type HookHandler = (event?: unknown, context?: TitlebarContext) => Promise<void> | void
+ 
+@@ -19,7 +23,9 @@ type Harness = {
+   handlers: Record<string, HookHandler>
+   titles: string[]
+   lastTitle: () => string | undefined
+-  callHook: (name: string, event?: unknown) => Promise<void>
++  callHook: (name: string, event?: unknown) => Promise<unknown>
++  intervals: ManagedTimer[]
++  timeouts: ManagedTimer[]
+ }
+ 
+ const CWD = '/repo/orca-app'
+@@ -38,9 +44,12 @@ function createHarness(
+     setTitle?: (title: string) => void
+     globals?: Record<string | symbol, unknown>
+     env?: Record<string, string>
++    managedTimers?: boolean
+   } = {}
+ ): Harness {
+   const titles: string[] = []
++  const intervals: ManagedTimer[] = []
++  const timeouts: ManagedTimer[] = []
+   const ctx: TitlebarContext = {
+     ui: {
+       setTitle: (title: string) => {
+@@ -50,6 +59,23 @@ function createHarness(
+     },
+     isIdle: options.isIdle
+   }
++  if (options.managedTimers ?? options.kind === 'omp') {
++    ctx.setInterval = (fn, ms) => {
++      const timer = { fn, ms, handle: setInterval(fn, ms), cleared: false }
++      intervals.push(timer)
++      return timer
++    }
++    ctx.setTimeout = (fn, ms) => {
++      const timer = { fn, ms, handle: setTimeout(fn, ms), cleared: false }
++      timeouts.push(timer)
++      return timer
++    }
++    ctx.clearTimer = (timer) => {
++      timer.cleared = true
++      clearTimeout(timer.handle)
++      clearInterval(timer.handle)
++    }
++  }
+ 
+   const module = {
+     exports: {} as {
+@@ -66,8 +92,8 @@ function createHarness(
+     process: {
+       env: { ORCA_PANE_KEY: options.paneKey ?? 'pane-1', ...options.env },
+       pid: options.env?.ORCA_PI_TITLE_MARKER_OWNED === undefined ? 111 : 222,
+-      title: options.processTitle ?? 'pi',
+-      argv: ['node', 'pi'],
++      title: options.processTitle ?? (options.kind === 'omp' ? 'omp' : 'pi'),
++      argv: ['node', options.kind === 'omp' ? 'omp' : 'pi'],
+       cwd: options.cwdImpl ?? (() => CWD)
+     },
+     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
+@@ -101,13 +127,15 @@ function createHarness(
+   return {
+     handlers,
+     titles,
++    intervals,
++    timeouts,
+     lastTitle: () => titles.at(-1),
+     callHook: async (name, event) => {
+       const handler = handlers[name]
+       if (!handler) {
+         throw new Error(`no handler registered for ${name}`)
+       }
+-      await handler(event, ctx)
++      return handler(event, ctx)
+     }
+   }
+ }
+@@ -125,6 +153,63 @@ describe('getPiTitlebarExtensionSource', () => {
+     expect(createHarness({ paneKey: '' }).handlers).toEqual({})
+   })
+ 
++  it.each(['pi', 'omp'] as const)('arms %s input before preflight and adopts the same animation', async (kind) => {
++    const h = createHarness({ kind, processTitle: 'omp', managedTimers: true })
++    expect(await h.callHook('input', { text: 'Do the thing' })).toBeUndefined()
++    h.intervals[0].fn()
++    expect(detectAgentStatusFromTitle(h.lastTitle()!)).toBe('working')
++    const interval = h.intervals[0]
++    const expiry = h.timeouts[0]
++    await h.callHook('agent_start')
++    expect(h.intervals).toEqual([interval])
++    expect(expiry.cleared).toBe(true)
++    expiry.fn() // A queued callback must not blank a turn that adopted the spinner.
++    expect(h.lastTitle()).toMatch(BRAILLE_RE)
++    expect(interval.cleared).toBe(false)
++    await h.callHook('input', { text: 'Steer the turn' })
++    expect(h.intervals).toEqual([interval])
++    await h.callHook('agent_end')
++    expect(interval.cleared).toBe(true)
++    expect(h.lastTitle()).toBe(IDLE_TITLE)
++  })
++
++  it('expires input that never starts a turn and clears its deadline on shutdown', async () => {
++    const h = createHarness({ kind: 'omp' })
++    await h.callHook('input', { text: '/help' })
++    expect(h.timeouts[0].ms).toBe(10000)
++    h.timeouts[0].fn()
++    expect(h.intervals[0].cleared).toBe(true)
++    expect(h.lastTitle()).toBe(IDLE_TITLE)
++    await h.callHook('input', { text: 'Next draft' })
++    await h.callHook('session_shutdown')
++    expect(h.timeouts[1].cleared).toBe(true)
++    expect(h.intervals[1].cleared).toBe(true)
++  })
++
++  it('does not use raw animation timers on an OMP host without managed timers', async () => {
++    const h = createHarness({ processTitle: 'omp', managedTimers: false })
++    await h.callHook('input', { text: 'Do the thing' })
++    await h.callHook('agent_start')
++    expect(vi.getTimerCount()).toBe(0)
++    await h.callHook('agent_end')
++    expect(h.lastTitle()).toBe(IDLE_TITLE)
++    await h.callHook('auto_compaction_start', { reason: 'idle' })
++    vi.advanceTimersByTime(301000)
++    expect(h.lastTitle()).toBe(IDLE_TITLE)
++    expect(vi.getTimerCount()).toBe(0)
++  })
++
++  it('contains timer callback failures on ordinary Pi without host timers', async () => {
++    let unavailable = false
++    const h = createHarness({ sessionNameImpl: () => {
++      if (unavailable) throw new Error('inactive runner')
++      return SESSION
++    } })
++    await h.callHook('input', { text: 'Do the thing' })
++    unavailable = true
++    vi.advanceTimersByTime(80)
++    expect(vi.getTimerCount()).toBe(0)
++  })
+   it('stops the spinner when the agent settles', async () => {
+     const harness = createHarness()
+ 
+@@ -232,7 +317,7 @@ describe('getPiTitlebarExtensionSource', () => {
+     'stops final OMP completion without waiting for isIdle: %j',
+     async (options) => {
+       const isIdle = vi.fn(() => false)
+-      const harness = createHarness({ ...options, isIdle })
++      const harness = createHarness({ ...options, isIdle, managedTimers: true })
+       await harness.callHook('agent_start')
+       await harness.callHook('agent_end', { willContinue: false })
+       const completedTitle = harness.lastTitle()
+@@ -371,9 +456,6 @@ describe('getPiTitlebarExtensionSource', () => {
+     expect(harness.lastTitle()).toMatch(BRAILLE_RE)
+   })
+ 
+-  it('leaves the marker to OMP approval events instead of painting it', () => {
+-    expect(createHarness({ kind: 'omp' }).handlers.ui_prompt_start).toBeUndefined()
+-  })
+ 
+   it('still caps idle maintenance while a dialog holds the title', async () => {
+     const harness = createHarness()
+diff --git a/src/main/pi/titlebar-extension-source.ts b/src/main/pi/titlebar-extension-source.ts
+index bd77e169dd5fd113298638642f7e33563063fdf6..7e47600e77ce68cf2aa1ec50bdf18778268ad609 100644
+--- a/src/main/pi/titlebar-extension-source.ts
++++ b/src/main/pi/titlebar-extension-source.ts
+@@ -1,10 +1,11 @@
+ import { getPiTitlebarLifetimeSourceLines } from './titlebar-extension-lifetime-source'
+ import type { PiAgentKind } from '../../shared/pi-agent-kind'
+-import { getPiOmpRuntimeDetectionSourceLines } from './agent-status-runtime-detection-source'
++import { getPiAgentStatusRuntimeDetectionSourceLines } from './agent-status-runtime-detection-source'
+ 
+ export const ORCA_PI_EXTENSION_FILE = 'orca-titlebar-spinner.ts'
+ 
+ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
++  kind = kind === 'prime-agent' ? kind : 'pi'
+   // Why: OMP reports input waits through its own approval events, which the status
+   // extension already maps, and it writes this same marker natively. The runtime check
+   // matters as well as the kind: a bare-shell OMP launch runs inside a pi-kind pane.
+@@ -49,7 +50,7 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+       : []
+ 
+   return [
+-    ...(kind === 'pi' ? [...getPiOmpRuntimeDetectionSourceLines(`/hook/${kind}`), ''] : []),
++    ...getPiAgentStatusRuntimeDetectionSourceLines(kind),
+     'const BRAILLE_FRAMES = [',
+     "  '\\u280b',",
+     "  '\\u2819',",
+@@ -114,6 +115,28 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+ 
+     ...getPiTitlebarLifetimeSourceLines(),
+     '  let timer = null',
++    '  let inputExpiry = null',
++    '  let turnActive = false',
++    '  function schedule(ctx, name, callback, ms) {',
++    '    // OMP owns timers at teardown; Pi lacks that API, so use contained raw callbacks there.',
++    "    if (name === 'setTimeout' && typeof ctx?.setTimeout === 'function') return { handle: ctx.setTimeout(callback, ms), host: ctx }",
++    "    if (name === 'setInterval' && typeof ctx?.setInterval === 'function') return { handle: ctx.setInterval(callback, ms), host: ctx }",
++    '    if (isOmpRuntime()) return null',
++    '    const handle = (name === "setInterval" ? setInterval : setTimeout)(() => {',
++    '      if (disposed) return',
++    '      try { callback() } catch { clearOwnedTimers() }',
++    '    }, ms)',
++    '    handle?.unref?.()',
++    '    return { handle, host: null }',
++    '  }',
++    '  function cancel(timer, interval = false) {',
++    '    if (!timer) return',
++    '    try {',
++    '      if (timer.host) timer.host.clearTimer?.(timer.handle)',
++    '      else (interval ? clearInterval : clearTimeout)(timer.handle)',
++    '    } catch {}',
++    '  }',
++    '  function clearInputExpiry() { cancel(inputExpiry); inputExpiry = null }',
+     '  let frameIndex = 0',
+     '  // Why: only idle maintenance owns a spinner of its own. A threshold compaction runs',
+     '  // inside an agent turn, whose spinner must outlive it, and any newer start clears the',
+@@ -155,25 +178,24 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+     '  }',
+     '',
+     '  function clearPendingAgentEndCheck() {',
+-    '    if (pendingAgentEndCheck !== null) clearTimeout(pendingAgentEndCheck)',
++    '    cancel(pendingAgentEndCheck)',
+     '    pendingAgentEndCheck = null',
+     '    pendingAgentEndContext = null',
+     '  }',
+     '',
+     '  function stopMarkerReassert() {',
+-    '    if (markerTimer) clearInterval(markerTimer)',
++    '    cancel(markerTimer, true)',
+     '    markerTimer = null',
+     '  }',
+     '',
+     '  function startMarkerReassert(ctx) {',
+     '    stopMarkerReassert()',
+-    "    markerTimer = setInterval(() => paintTitle(ctx, () => getMarkedTitle(pi, '!')), MARKER_REASSERT_MS)",
+-    "    if (typeof markerTimer.unref === 'function') markerTimer.unref()",
++    "    markerTimer = schedule(ctx, 'setInterval', () => paintTitle(ctx, () => getMarkedTitle(pi, '!')), MARKER_REASSERT_MS)",
+     '  }',
+     '',
+     '  function clearAnimation() {',
+     '    if (timer) {',
+-    '      clearInterval(timer)',
++    '      cancel(timer, true)',
+     '      timer = null',
+     '    }',
+     '    frameIndex = 0',
+@@ -182,6 +204,8 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+     '',
+     '  function stopAnimation(ctx) {',
+     '    clearPendingAgentEndCheck()',
++    '    turnActive = false',
++    '    clearInputExpiry()',
+     '    clearAnimation()',
+     '    // Why: settling under an open dialog still leaves the pane waiting on the user, so',
+     '    // the idle title must not retire the marker the dialog is holding.',
+@@ -219,8 +243,12 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+     '  function startAnimation(ctx) {',
+     '    clearPendingAgentEndCheck()',
+     '    clearAnimation()',
++    "    if (isOmpRuntime() && typeof ctx?.setInterval !== 'function') {",
++    '      paintTitle(ctx, () => getBaseTitle(pi))',
++    '      return',
++    '    }',
+     '    if (!renderFrame(ctx)) return',
+-    '    timer = setInterval(() => renderFrame(ctx), FRAME_INTERVAL_MS)',
++    "    timer = schedule(ctx, 'setInterval', () => renderFrame(ctx), FRAME_INTERVAL_MS)",
+     '  }',
+     '',
+     '  function checkPendingAgentEnd() {',
+@@ -237,13 +265,27 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+     '      clearOwnedTimers()',
+     '      return',
+     '    }',
+-    '    pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, agentEndIdleRecheckMs)',
+-    "    if (typeof pendingAgentEndCheck.unref === 'function') pendingAgentEndCheck.unref()",
++    "    pendingAgentEndCheck = schedule(ctx, 'setTimeout', checkPendingAgentEnd, agentEndIdleRecheckMs)",
+     '    agentEndIdleRecheckMs = Math.min(agentEndIdleRecheckMs * 2, AGENT_END_IDLE_RECHECK_MAX_MS)',
+     '  }',
+     '',
++    '  // Submission precedes OMP preflight. Observe input without handling or rewriting it.',
++    "  on('input', async (_event, ctx) => {",
++    '    if (timer !== null || turnActive) return',
++    "    if (isOmpRuntime() && typeof ctx?.setTimeout !== 'function') return",
++    '    startAnimation(ctx)',
++    '    clearInputExpiry()',
++    "    inputExpiry = schedule(ctx, 'setTimeout', () => {",
++    '      inputExpiry = null',
++    '      if (!turnActive) stopAnimation(ctx)',
++    '    }, 10000)',
++    '  })',
++    '',
+     "  on('agent_start', async (_event, ctx) => {",
++    '    turnActive = true',
++    '    clearInputExpiry()',
+     '    resetPromptState()',
++    '    if (timer !== null && !idleCompactionOwnsSpinner) return',
+     '    startAnimation(ctx)',
+     '  })',
+     '',
+@@ -266,15 +308,14 @@ export function getPiTitlebarExtensionSource(kind: PiAgentKind = 'pi'): string {
+     '      clearPendingAgentEndCheck()',
+     '      return',
+     '    }',
+-    `    if (${kind === 'omp' ? 'true' : kind === 'pi' ? 'isOmpRuntime()' : 'false'} || !ctx || typeof ctx.isIdle !== 'function') {`,
++    '    if (isOmpRuntime() || !ctx || typeof ctx.isIdle !== "function") {',
+     '      stopAnimation(ctx)',
+     '      return',
+     '    }',
+     '    clearPendingAgentEndCheck()',
+     '    agentEndIdleRecheckMs = AGENT_END_IDLE_RECHECK_MS',
+     '    pendingAgentEndContext = ctx',
+-    '    pendingAgentEndCheck = setTimeout(checkPendingAgentEnd, 0)',
+-    "    if (typeof pendingAgentEndCheck.unref === 'function') pendingAgentEndCheck.unref()",
++    "    pendingAgentEndCheck = schedule(ctx, 'setTimeout', checkPendingAgentEnd, 0)",
+     '  })',
+     '',
+     ...uiPromptHandlers,

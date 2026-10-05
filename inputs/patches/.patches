@@ -1,0 +1,15 @@
+show-per-account-status-bar-meters.patch
+retain-worker-dispatch-authority-and-recovery.patch
+serve-only-on-approved-loopback-or-tailnet.patch
+isolate-managed-Claude-account-auth.patch
+preserve-PTY-process-and-idle-lifecycle.patch
+refresh-managed-account-usage-independently.patch
+preserve-restored-pane-and-SSH-lineage.patch
+read-CodexBar-provider-usage.patch
+run-gates-with-frozen-workspace-dependencies.patch
+build-local-artifacts-with-exact-source-provenance.patch
+run-meter-gate-under-a-private-Linux-display.patch
+render-kind-neutral-agent-extensions-and-arm-input-safely.patch
+bind-Linux-provenance-to-full-series-and-build-digests.patch
+exercise-account-isolation-with-SQLite-store-authority.patch
+package-Debian-data-with-publisher-readable-gzip.patch

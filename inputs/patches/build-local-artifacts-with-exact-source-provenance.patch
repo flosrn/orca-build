@@ -1,0 +1,1095 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HarnessOS <patches@harnessos.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: build local artifacts with exact source provenance
+
+Carried-Because: Local builds carry exact source provenance, sign only with the identity they are given, and never publish to upstream.
+Tests: config/scripts/build-provenance.test.mjs, config/scripts/electron-builder-mac-channel-config.test.mjs and affected packaging gates.
+
+diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
+index 456fa8f2831f87eee8e0bd8516353242076dc845..4a3b807f1493df461d4989778c3c767dca9a5a05 100644
+--- a/.github/CONTRIBUTING.md
++++ b/.github/CONTRIBUTING.md
+@@ -22,10 +22,16 @@ pnpm dev
+ ```
+ 
+ Ordinary installs include native optional dependencies for the current OS and CPU only.
+-Before a cross-architecture build (including `pnpm build:mac`, which produces both x64 and
+-arm64 artifacts by default), run `pnpm install:release` to add the other CPU's variants.
++Local `pnpm build:mac` produces an arm64 zip, signed with the identity `CSC_NAME` or
++`CSC_LINK` names, and unsigned when neither is set.
++Before explicitly targeting another CPU, run `pnpm install:release`.
+ See [the install policy](../docs/reference/pnpm-install-policy.md).
+ 
++Local builds never publish or install a global CLI. Packaged Linux `orca-fork-build.json`
++and Mac `orca-local-build.json` record the full workbench HEAD; environment commit
++overrides cannot replace it. HarnessOS publication additionally requires the exact
++artifact's signing and bind qualifications. A local build alone is not qualification.
++
+ ## Branch Naming
+ 
+ Use a clear, descriptive branch name that reflects the change.
+diff --git a/AGENTS.md b/AGENTS.md
+index 8ac5cd365cc31c37833e43efa54d32c1b15b5d3a..f1fbe40c147415a009b7824447b02bae521028a5 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -85,7 +85,7 @@ Orca targets macOS, Linux, and Windows. Keep all platform-dependent behavior beh
+ 
+ ## Native Dependency Installs
+ 
+-Ordinary `pnpm install` covers the host OS and CPU only. Before packaging for another architecture — including `pnpm build:mac`, which builds x64 and arm64 by default — run `pnpm install:release`. electron-builder only warns on a missing `extraResources` source, so the `beforePack` guard is what turns a thin install into a build failure instead of a silently broken artifact; see [`docs/reference/pnpm-install-policy.md`](./docs/reference/pnpm-install-policy.md).
++Ordinary `pnpm install` covers the host OS and CPU only. Local `pnpm build:mac` targets arm64. Before explicitly packaging for another CPU, run `pnpm install:release`. The `beforePack` guard refuses missing target-native resources; see [`docs/reference/pnpm-install-policy.md`](./docs/reference/pnpm-install-policy.md).
+ 
+ ## SSH Use Case
+ 
+diff --git a/config/electron-builder.config.cjs b/config/electron-builder.config.cjs
+index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8a9b23620 100644
+--- a/config/electron-builder.config.cjs
++++ b/config/electron-builder.config.cjs
+@@ -13,7 +13,7 @@ const {
+   verifyPackagedMainRuntimeDeps
+ } = require('./packaged-runtime-node-modules.cjs')
+ const { verifyLinuxGlibcFloor } = require('./scripts/verify-linux-glibc-floor.cjs')
+-const { writeMacBuildCompatibility } = require('./scripts/mac-build-compatibility.cjs')
++const { writeBuildProvenance } = require('./scripts/build-provenance.cjs')
+ const {
+   MOBILE_WEB_BUNDLE_DIR,
+   assertMobileWebBundleBuilt
+@@ -51,6 +51,9 @@ const isMacRelease = process.env.ORCA_MAC_RELEASE === '1' || isMacHourly || isMa
+ const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
+ const localBuildVersion =
+   isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
++// Why: a local build signs only with an identity it is given. Without one it stays unsigned rather
++// than picking up whatever the keychain offers, and HarnessOS signs it with Orca Dev afterwards.
++const localSigningIdentity = Boolean(localBuildVersion && (process.env.CSC_NAME || process.env.CSC_LINK))
+ const isHourlyChannel = isMacHourly || isWinHourly
+ const isDailyChannel = isMacDaily || isWinDaily
+ const isAdhocChannel = isMacAdhoc || isWinAdhoc
+@@ -61,19 +64,6 @@ const devChannelBuildVersion = isHourlyChannel
+     : isAdhocChannel
+       ? process.env.ORCA_ADHOC_BUILD_VERSION
+       : undefined
+-// Why each dev channel gets its own repo rather than tagging into the main one:
+-// the releases atom feed exposes only the 10 newest entries, so 24 hourly tags a
+-// day would evict every stable/RC entry and strand users on a feed with nothing
+-// to install. Keeping adhoc/daily separate from hourly too means a branch build
+-// or a once-a-day cut cannot be picked up by someone who only meant to ride
+-// main's hourlies.
+-const devChannelRepo = isHourlyChannel
+-  ? 'orca-hourly'
+-  : isDailyChannel
+-    ? 'orca-daily'
+-    : isAdhocChannel
+-      ? 'orca-adhoc'
+-      : null
+ const appId = 'com.stablyai.orca'
+ const featureWallResources = {
+   from: 'resources/onboarding/feature-wall',
+@@ -330,24 +320,16 @@ module.exports = {
+     if (context.electronPlatformName === 'linux') {
+       writeFileSync(join(resourcesDir, 'package-type'), 'AppImage')
+     }
+-    if (context.electronPlatformName === 'darwin') {
+-      const architectureByEnum = { 1: 'x64', 3: 'arm64' }
+-      const architecture = architectureByEnum[context.arch]
++    if (context.electronPlatformName === 'darwin' || context.electronPlatformName === 'linux') {
++      const architecture = { 1: 'x64', 3: 'arm64' }[context.arch]
+       if (!architecture) {
+-        throw new Error(`Unsupported local-build compatibility architecture: ${context.arch}`)
++        throw new Error(`Unsupported build provenance architecture: ${context.arch}`)
+       }
+-      const version = context.packager.appInfo.version
+-      let commit = process.env.ORCA_BUILD_COMMIT || process.env.GITHUB_SHA || 'unknown'
+-      if (commit === 'unknown') {
+-        try {
+-          commit = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+-            encoding: 'utf8'
+-          }).trim()
+-        } catch {
+-          // Source archives can still produce a signed build with an explicit version.
+-        }
+-      }
+-      writeMacBuildCompatibility(resourcesDir, { version, commit, architecture })
++      writeBuildProvenance(resourcesDir, {
++        version: context.packager.appInfo.version,
++        platform: context.electronPlatformName,
++        architecture
++      })
+     }
+     stampPackagedCliVersion(resourcesDir, context.packager.appInfo.version)
+     prunePackagedRuntimeNodeModules(resourcesDir, context.electronPlatformName, context.arch)
+@@ -484,6 +466,7 @@ module.exports = {
+     include: resolve(__dirname, 'nsis', 'orca-installer-hooks.nsh')
+   },
+   mac: {
++    artifactName: 'orca-macos-${arch}.${ext}',
+     // Why rank Alternate: Orca joins Finder's "Open With" list for Markdown without claiming
+     // LSHandlerRank ownership, so whichever editor the user already prefers stays the default.
+     // Why one entry per extension: app-builder-lib globs `*.${ext}`, which an array would break.
+@@ -532,6 +515,7 @@ module.exports = {
+     // under Documents/Desktop/Downloads fails with EPERM and no re-prompt. At 24
+     // builds a day that revokes the user's grants faster than they can re-grant.
+     notarize: isMacRelease,
++    ...(localBuildVersion && !localSigningIdentity ? { identity: null } : {}),
+     extraResources: [
+       ...commonExtraResources,
+       ...createPackagedRuntimeNodeModuleResources('darwin'),
+@@ -563,23 +547,10 @@ module.exports = {
+         to: 'MacOS/orca-keyboard-layout'
+       }
+     ],
+-    target: [
+-      {
+-        target: 'dmg',
+-        arch: ['x64', 'arm64']
+-      },
+-      {
+-        target: 'zip',
+-        arch: ['x64', 'arm64']
+-      }
+-    ]
+-  },
+-  // Why: release builds should fail if signing is unavailable instead of
+-  // silently downgrading to ad-hoc artifacts that look shippable in CI logs.
+-  forceCodeSigning: isMacRelease,
+-  dmg: {
+-    artifactName: 'orca-macos-${arch}.${ext}'
++    target: [{ target: 'zip', arch: ['arm64'] }]
+   },
++  // A local build given an identity must sign with it, never silently fall back to ad hoc.
++  forceCodeSigning: isMacRelease || localSigningIdentity,
+   linux: {
+     // Why mimeTypes and not fileAssociations: shared-mime-info already maps *.md/*.markdown to
+     // text/markdown, so reusing that type puts Orca in the Open With list without shipping a glob
+@@ -628,7 +599,7 @@ module.exports = {
+   },
+   deb: {
+     packageName: 'orca-ide',
+-    artifactName: 'orca-ide_${version}_${arch}.${ext}',
++    artifactName: isLinuxArm64Release ? 'orca-linux-arm64.${ext}' : 'orca-linux-x64.${ext}',
+     // Why: xvfb lets the bundled `orca serve` CLI run browser panes on a headless
+     // Linux host — Chromium needs a display server even for offscreen rendering,
+     // and serve starts Xvfb itself when present (see ensure-virtual-display.ts).
+@@ -674,16 +645,7 @@ module.exports = {
+   // on Intel Macs. The beforeBuild hook performs Orca's targeted rebuild and
+   // returns false so electron-builder does not rebuild optional cpu-features.
+   npmRebuild: true,
+-  publish: {
+-    provider: 'github',
+-    owner: 'stablyai',
+-    repo: devChannelRepo ?? 'orca',
+-    // Why draft on the main repo: `--publish always` otherwise creates a
+-    // public GitHub release as soon as the first platform uploads, and
+-    // /releases/latest serves a missing Windows exe. release-cut undrafts
+-    // only after every required asset exists.
+-    releaseType: devChannelRepo ? 'prerelease' : 'draft'
+-  }
++  publish: null
+ }
+ 
+ // Stamp the effective channel version where node-mode CLI code can read it.
+diff --git a/config/scripts/assert-github-release-is-draft.test.mjs b/config/scripts/assert-github-release-is-draft.test.mjs
+index aed313495dea23ea34a2eba77bebbb5d8e1c4997..62136363a89326f4ff9581f0ed93fec903eda3cb 100644
+--- a/config/scripts/assert-github-release-is-draft.test.mjs
++++ b/config/scripts/assert-github-release-is-draft.test.mjs
+@@ -1,15 +1,9 @@
+-import { readFileSync } from 'node:fs'
+-import { createRequire } from 'node:module'
+-import { join } from 'node:path'
+ import { describe, expect, it, vi } from 'vitest'
+-import { parse } from 'yaml'
+ import {
+   matchingDesktopReleases,
+   restorePublishedDesktopReleasesToDraft
+ } from './assert-github-release-is-draft.mjs'
+ 
+-const require = createRequire(import.meta.url)
+-const repoRoot = join(import.meta.dirname, '../..')
+ 
+ function jsonResponse(body, init = {}) {
+   return {
+@@ -99,67 +93,3 @@ describe('restorePublishedDesktopReleasesToDraft', () => {
+   })
+ })
+ 
+-describe('release draft workflow contract', () => {
+-  it('keeps GitHub releases draft until publish-release undrafts complete assets', () => {
+-    const releaseWorkflow = parse(
+-      readFileSync(join(repoRoot, '.github/workflows/release-cut.yml'), 'utf8')
+-    )
+-    const macWorkflow = parse(
+-      readFileSync(join(repoRoot, '.github/workflows/release-mac-build.yml'), 'utf8')
+-    )
+-    const electronBuilderConfig = require('../electron-builder.config.cjs')
+-    const cutCheckout = releaseWorkflow.jobs.cut.steps.find((step) => step.name === 'Checkout ref')
+-    const linuxDraftStep = releaseWorkflow.jobs.build.steps.find(
+-      (step) => step.name === 'Verify release remains draft after artifact upload'
+-    )
+-    const publishRelease = releaseWorkflow.jobs['publish-release'].steps.find(
+-      (step) => step.name === 'Publish release'
+-    )
+-    const macSteps = macWorkflow.jobs['build-mac'].steps
+-    const abortParentStep = macSteps.find(
+-      (step) => step.name === 'Abort if the parent release-cut run was cancelled'
+-    )
+-    const macPublishStep = macSteps.find(
+-      (step) => step.name === 'Publish release artifacts (macOS)'
+-    )
+-    const macDraftStep = macSteps.find(
+-      (step) => step.name === 'Verify release remains draft after artifact upload'
+-    )
+-
+-    expect(electronBuilderConfig.publish.releaseType).toBe('draft')
+-    expect(cutCheckout.with['fetch-tags']).toBe(true)
+-    expect(linuxDraftStep.shell).toBe('bash')
+-    expect(linuxDraftStep.run).toContain('assert-github-release-is-draft.mjs')
+-    expect(linuxDraftStep.run).toContain('needs.cut.outputs.tag')
+-    expect(publishRelease.run).toContain('gh release edit')
+-    expect(publishRelease.run).toContain('--draft=false')
+-    expect(macSteps.indexOf(abortParentStep)).toBeLessThan(macSteps.indexOf(macPublishStep))
+-    expect(abortParentStep.env.PARENT_RUN).toBe('${{ inputs.release_run_id }}')
+-    expect(abortParentStep.run).toContain('refusing to publish mac artifacts')
+-    expect(macDraftStep.shell).toBe('bash')
+-    expect(macDraftStep.run).toContain('assert-github-release-is-draft.mjs')
+-    expect(macDraftStep.run).toContain('inputs.tag')
+-    expect(macPublishStep.with.command).toContain('-c.publish.releaseType=draft')
+-
+-    const linuxCommands = releaseWorkflow.jobs.build.strategy.matrix.include
+-      .filter((entry) => String(entry.platform).startsWith('linux'))
+-      .map((entry) => entry.release_command)
+-    expect(linuxCommands.length).toBe(2)
+-    for (const command of linuxCommands) {
+-      expect(command).toContain('-c.publish.releaseType=draft')
+-    }
+-
+-    const createRestore = releaseWorkflow.jobs['create-release'].steps.find(
+-      (step) => step.name === 'Restore draft-release scripts from the workflow ref'
+-    )
+-    const buildRestore = releaseWorkflow.jobs.build.steps.find(
+-      (step) => step.name === 'Restore draft-publish scripts from the workflow ref'
+-    )
+-    const macRestore = macSteps.find(
+-      (step) => step.name === 'Restore draft-publish scripts from the workflow ref'
+-    )
+-    expect(createRestore.run).toContain('create-draft-release.mjs')
+-    expect(buildRestore.run).toContain('assert-github-release-is-draft.mjs')
+-    expect(macRestore.run).toContain('assert-github-release-is-draft.mjs')
+-  })
+-})
+diff --git a/config/scripts/build-linux-local.mjs b/config/scripts/build-linux-local.mjs
+index 2328f00bede5e7b648c08e2c4d00e22fb2a287b5..0d08bc7a9da745a0cf1cbf1af57898557e759d47 100644
+--- a/config/scripts/build-linux-local.mjs
++++ b/config/scripts/build-linux-local.mjs
+@@ -2,6 +2,9 @@
+ 
+ import { execFileSync } from 'node:child_process'
+ import { resolve } from 'node:path'
++import { createRequire } from 'node:module'
++
++const require = createRequire(import.meta.url)
+ 
+ const SUPPORTED_ARCHES = new Set(['x64', 'arm64'])
+ 
+@@ -20,13 +23,11 @@ export function resolveLinuxBuildArch({
+   return arch
+ }
+ 
+-export function buildLinuxElectronBuilderArgs(arch, extraArgs = []) {
++function buildLinuxElectronBuilderArgs(arch, extraArgs = []) {
+   if (!SUPPORTED_ARCHES.has(arch)) {
+     throw new Error(`Unsupported Linux build architecture: ${arch}`)
+   }
+   return [
+-    'exec',
+-    'electron-builder',
+     '--config',
+     'config/electron-builder.config.cjs',
+     '--linux',
+@@ -34,7 +35,9 @@ export function buildLinuxElectronBuilderArgs(arch, extraArgs = []) {
+     'deb',
+     'rpm',
+     `--${arch}`,
+-    ...extraArgs
++    ...extraArgs,
++    '--publish',
++    'never'
+   ]
+ }
+ 
+@@ -42,8 +45,6 @@ export function runLocalLinuxBuild({
+   arch = resolveLinuxBuildArch(),
+   extraArgs = [],
+   environment = process.env,
+-  execFile = execFileSync,
+-  platform = process.platform,
+   cwd = resolve(import.meta.dirname, '../..')
+ } = {}) {
+   const env = { ...environment }
+@@ -52,12 +53,11 @@ export function runLocalLinuxBuild({
+   } else {
+     delete env.ORCA_LINUX_ARM64_RELEASE
+   }
+-  const pnpm = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+-  execFile(pnpm, buildLinuxElectronBuilderArgs(arch, extraArgs), {
+-    cwd,
+-    env,
+-    stdio: 'inherit'
+-  })
++  execFileSync(
++    process.execPath,
++    [require.resolve('electron-builder/cli.js'), ...buildLinuxElectronBuilderArgs(arch, extraArgs)],
++    { cwd, env, stdio: 'inherit' }
++  )
+ }
+ 
+ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+diff --git a/config/scripts/build-linux-local.test.mjs b/config/scripts/build-linux-local.test.mjs
+index 684c83f3265ee9fb86f440164b96109efc963ce6..1215cf0abfcd7cefc8c68ecf97d1cedae125c790 100644
+--- a/config/scripts/build-linux-local.test.mjs
++++ b/config/scripts/build-linux-local.test.mjs
+@@ -1,21 +1,7 @@
+-import { readFileSync } from 'node:fs'
+-import { resolve } from 'node:path'
+-import { describe, expect, it, vi } from 'vitest'
+-import {
+-  buildLinuxElectronBuilderArgs,
+-  resolveLinuxBuildArch,
+-  runLocalLinuxBuild
+-} from './build-linux-local.mjs'
++import { describe, expect, it } from 'vitest'
++import { resolveLinuxBuildArch } from './build-linux-local.mjs'
+ 
+ describe('local Linux build target', () => {
+-  it('is the package script used by the local Linux build', () => {
+-    const packageJson = JSON.parse(
+-      readFileSync(resolve(import.meta.dirname, '../../package.json'), 'utf8')
+-    )
+-    expect(packageJson.scripts['build:linux']).toContain(
+-      'node config/scripts/build-linux-local.mjs'
+-    )
+-  })
+ 
+   it('follows a native Linux host architecture', () => {
+     expect(resolveLinuxBuildArch({ platform: 'linux', hostArch: 'arm64' })).toBe('arm64')
+@@ -33,53 +19,6 @@ describe('local Linux build target', () => {
+     expect(() => resolveLinuxBuildArch({ platform: 'linux', hostArch: 'ia32' })).toThrow(
+       'Unsupported Linux build architecture'
+     )
+-    expect(() => buildLinuxElectronBuilderArgs('ia32')).toThrow(
+-      'Unsupported Linux build architecture'
+-    )
+   })
+ 
+-  it('passes an explicit target and matching artifact-name environment', () => {
+-    const execFile = vi.fn()
+-    runLocalLinuxBuild({
+-      arch: 'arm64',
+-      environment: { PATH: '/bin', ORCA_LINUX_ARM64_RELEASE: undefined },
+-      execFile,
+-      platform: 'linux',
+-      cwd: '/workspace'
+-    })
+-    expect(execFile).toHaveBeenCalledWith(
+-      'pnpm',
+-      buildLinuxElectronBuilderArgs('arm64'),
+-      expect.objectContaining({
+-        cwd: '/workspace',
+-        env: expect.objectContaining({ ORCA_LINUX_ARM64_RELEASE: '1' }),
+-        stdio: 'inherit'
+-      })
+-    )
+-
+-    expect(buildLinuxElectronBuilderArgs('x64')).toEqual(
+-      expect.arrayContaining(['--linux', 'AppImage', 'deb', 'rpm', '--x64'])
+-    )
+-
+-    runLocalLinuxBuild({
+-      arch: 'x64',
+-      environment: { PATH: '/bin', ORCA_LINUX_ARM64_RELEASE: '1' },
+-      execFile,
+-      platform: 'linux',
+-      cwd: '/workspace'
+-    })
+-    expect(execFile).toHaveBeenLastCalledWith(
+-      'pnpm',
+-      buildLinuxElectronBuilderArgs('x64'),
+-      expect.objectContaining({
+-        env: expect.not.objectContaining({ ORCA_LINUX_ARM64_RELEASE: expect.anything() })
+-      })
+-    )
+-  })
+-
+-  it('uses the Windows pnpm command name when cross-host packaging', () => {
+-    const execFile = vi.fn()
+-    runLocalLinuxBuild({ arch: 'x64', execFile, platform: 'win32', cwd: 'C:\\workspace' })
+-    expect(execFile.mock.calls[0]?.[0]).toBe('pnpm.cmd')
+-  })
+ })
+diff --git a/config/scripts/build-mac-local.mjs b/config/scripts/build-mac-local.mjs
+index d0426a9468a2d8d6e3ca0d48de02d7ac64500b7c..7622ce7dcff507b41c97beca6b8fc02d528979ef 100644
+--- a/config/scripts/build-mac-local.mjs
++++ b/config/scripts/build-mac-local.mjs
+@@ -1,6 +1,12 @@
+ import { execFileSync } from 'node:child_process'
+ import { readFileSync } from 'node:fs'
+ import { resolve } from 'node:path'
++import { createRequire } from 'node:module'
++import provenance from './build-provenance.cjs'
++
++const require = createRequire(import.meta.url)
++const WORKBENCH_ROOT = resolve(import.meta.dirname, '../..')
++const { readWorkbenchCommit } = provenance
+ 
+ export function createLocalBuildVersion(baseVersion, timestamp, commit) {
+   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(baseVersion)) {
+@@ -17,30 +23,32 @@ export function createLocalBuildVersion(baseVersion, timestamp, commit) {
+   return baseVersion.includes('-') ? `${baseVersion}.${suffix}` : `${baseVersion}-${suffix}`
+ }
+ 
+-export function getLocalBuildIdentity() {
+-  const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
+-  const commit = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+-    encoding: 'utf8'
+-  }).trim()
++export function getLocalBuildIdentity({ cwd = WORKBENCH_ROOT, timestamp = Date.now() } = {}) {
++  const packageJson = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf8'))
++  const commit = readWorkbenchCommit(cwd)
+   return {
+     commit,
+-    version: createLocalBuildVersion(packageJson.version, Date.now(), commit)
++    version: createLocalBuildVersion(packageJson.version, timestamp, commit)
+   }
+ }
+ 
+ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+   const identity = getLocalBuildIdentity()
+   console.log(`[build:mac] local update version ${identity.version}`)
++  const env = { ...process.env, ORCA_LOCAL_BUILD_VERSION: identity.version }
++  for (const flag of [
++    'ORCA_MAC_RELEASE', 'ORCA_MAC_HOURLY', 'ORCA_MAC_DAILY', 'ORCA_MAC_ADHOC',
++    'ORCA_WIN_HOURLY', 'ORCA_WIN_DAILY', 'ORCA_WIN_ADHOC'
++  ]) {
++    delete env[flag]
++  }
+   execFileSync(
+-    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+-    ['exec', 'electron-builder', '--config', 'config/electron-builder.config.cjs', '--mac'],
+-    {
+-      env: {
+-        ...process.env,
+-        ORCA_BUILD_COMMIT: identity.commit,
+-        ORCA_LOCAL_BUILD_VERSION: identity.version
+-      },
+-      stdio: 'inherit'
+-    }
++    process.execPath,
++    [
++      require.resolve('electron-builder/cli.js'),
++      '--config', 'config/electron-builder.config.cjs',
++      '--mac', 'zip', '--arm64', '--publish', 'never'
++    ],
++    { cwd: WORKBENCH_ROOT, env, stdio: 'inherit' }
+   )
+ }
+diff --git a/config/scripts/build-provenance.cjs b/config/scripts/build-provenance.cjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..22bae3c00bf7dd3e43ad1ce2d126b8dbefa86a86
+--- /dev/null
++++ b/config/scripts/build-provenance.cjs
+@@ -0,0 +1,38 @@
++const { execFileSync } = require('node:child_process')
++const { writeFileSync } = require('node:fs')
++const { join, resolve } = require('node:path')
++const { writeMacBuildCompatibility } = require('./mac-build-compatibility.cjs')
++
++const WORKBENCH_ROOT = resolve(__dirname, '../..')
++
++function readWorkbenchCommit(cwd = WORKBENCH_ROOT) {
++  const commit = execFileSync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], {
++    cwd,
++    encoding: 'utf8'
++  }).trim()
++  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
++    throw new Error(`Git returned an invalid full commit identity: ${commit}`)
++  }
++  return commit
++}
++
++function writeBuildProvenance(
++  resourcesDir,
++  { platform, version, architecture },
++  cwd = WORKBENCH_ROOT
++) {
++  const commit = readWorkbenchCommit(cwd)
++  if (platform === 'darwin') {
++    writeMacBuildCompatibility(resourcesDir, { version, commit, architecture })
++  } else if (platform === 'linux') {
++    writeFileSync(
++      join(resourcesDir, 'orca-fork-build.json'),
++      `${JSON.stringify({ version, commit, platform, architecture }, null, 2)}\n`,
++      'utf8'
++    )
++  } else {
++    throw new Error(`Unsupported build provenance platform: ${platform}`)
++  }
++}
++
++module.exports = { readWorkbenchCommit, writeBuildProvenance }
+diff --git a/config/scripts/build-provenance.test.mjs b/config/scripts/build-provenance.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2c6bec733e5ead684568d21781f4eec54c0bf30
+--- /dev/null
++++ b/config/scripts/build-provenance.test.mjs
+@@ -0,0 +1,90 @@
++import { execFileSync } from 'node:child_process'
++import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { describe, expect, it } from 'vitest'
++import { getLocalBuildIdentity } from './build-mac-local.mjs'
++import provenance from './build-provenance.cjs'
++
++const { readWorkbenchCommit, writeBuildProvenance } = provenance
++
++function withWorkbench(check) {
++  const root = mkdtempSync(join(tmpdir(), 'orca-build-provenance-'))
++  const cwd = join(root, 'workbench')
++  const home = join(root, 'home')
++  mkdirSync(cwd)
++  mkdirSync(home)
++  const git = (...args) => execFileSync('git', args, {
++    cwd,
++    encoding: 'utf8',
++    env: {
++      ...process.env,
++      HOME: home,
++      GIT_CONFIG_GLOBAL: '/dev/null',
++      GIT_CONFIG_SYSTEM: '/dev/null',
++      GIT_AUTHOR_NAME: 'Build fixture',
++      GIT_AUTHOR_EMAIL: 'build@example.invalid',
++      GIT_COMMITTER_NAME: 'Build fixture',
++      GIT_COMMITTER_EMAIL: 'build@example.invalid',
++      GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
++      GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z'
++    }
++  }).trim()
++  try {
++    git('init', '--quiet')
++    writeFileSync(join(cwd, 'package.json'), JSON.stringify({ version: '1.4.215' }))
++    git('add', 'package.json')
++    git('commit', '--quiet', '-m', 'upstream')
++    check({ cwd, root, git })
++  } finally {
++    rmSync(root, { recursive: true, force: true })
++  }
++}
++
++describe('workbench build provenance', () => {
++  it('stamps both packages with the full current workbench HEAD, not the upstream commit', () => {
++    withWorkbench(({ cwd, root, git }) => {
++      const upstream = git('rev-parse', 'HEAD')
++      git('commit', '--quiet', '--allow-empty', '-m', 'fork concern')
++      const head = git('rev-parse', 'HEAD')
++      expect(head).not.toBe(upstream)
++      expect(readWorkbenchCommit(cwd)).toBe(head)
++      const oldBuildCommit = process.env.ORCA_BUILD_COMMIT
++      const oldGithubSha = process.env.GITHUB_SHA
++      process.env.ORCA_BUILD_COMMIT = upstream
++      process.env.GITHUB_SHA = upstream
++      try {
++        const identity = getLocalBuildIdentity({ cwd, timestamp: 123456 })
++        expect(identity.commit).toBe(head)
++        expect(identity.version).toBe(`1.4.215-local.123456.${head.slice(0, 12)}`)
++        for (const [platform, architecture, filename] of [
++          ['darwin', 'arm64', 'orca-local-build.json'],
++          ['linux', 'x64', 'orca-fork-build.json']
++        ]) {
++          const resources = join(root, platform, 'resources')
++          mkdirSync(resources, { recursive: true })
++          writeBuildProvenance(resources, { platform, architecture, version: identity.version }, cwd)
++          const stamp = JSON.parse(readFileSync(join(resources, filename), 'utf8'))
++          expect(stamp.commit).toBe(head)
++          expect(stamp.platform).toBe(platform)
++          expect(stamp.architecture).toBe(architecture)
++          expect(stamp.version).toBe(identity.version)
++        }
++      } finally {
++        if (oldBuildCommit === undefined) delete process.env.ORCA_BUILD_COMMIT
++        else process.env.ORCA_BUILD_COMMIT = oldBuildCommit
++        if (oldGithubSha === undefined) delete process.env.GITHUB_SHA
++        else process.env.GITHUB_SHA = oldGithubSha
++      }
++    })
++  })
++
++  it('refuses a repository without a committed HEAD instead of inventing an identity', () => {
++    withWorkbench(({ root, git }) => {
++      const unborn = join(root, 'unborn')
++      mkdirSync(unborn)
++      git('init', '--quiet', unborn)
++      expect(() => readWorkbenchCommit(unborn)).toThrow()
++    })
++  })
++})
+diff --git a/config/scripts/electron-builder-config.test.mjs b/config/scripts/electron-builder-config.test.mjs
+index 430a5fae4c826ecf1e908586af4270f6645c87a4..941959bbb9161b584c7feeeab2f503294f0dc265 100644
+--- a/config/scripts/electron-builder-config.test.mjs
++++ b/config/scripts/electron-builder-config.test.mjs
+@@ -273,16 +273,6 @@ describe('electron-builder config', () => {
+     expect(electronBuilderConfig.linux.desktop.entry.StartupWMClass).toBe('orca')
+   })
+ 
+-  it('uses the release artifact set as local Linux targets without changing existing names', () => {
+-    expect(electronBuilderConfig.linux.target).toEqual(['AppImage', 'deb', 'rpm'])
+-    expect(electronBuilderConfig.toolsets).toEqual({ appimage: '1.0.3' })
+-    expect(electronBuilderConfig.appImage.artifactName).toBe('orca-linux.${ext}')
+-    expect(electronBuilderConfig.deb.artifactName).toBe('orca-ide_${version}_${arch}.${ext}')
+-    expect(electronBuilderConfig.rpm).toMatchObject({
+-      packageName: 'orca-ide',
+-      artifactName: 'orca-ide-${version}.${arch}.${ext}'
+-    })
+-  })
+ 
+   it('retains electron-builder runtime dependencies in deb and rpm packages', () => {
+     for (const target of ['deb', 'rpm']) {
+diff --git a/config/scripts/electron-builder-mac-channel-config.test.mjs b/config/scripts/electron-builder-mac-channel-config.test.mjs
+index 05572f3497ae2ad45186605741f2d27efa620756..1f4733bc16f65d1e716f9e89b8a101340f4bd985 100644
+--- a/config/scripts/electron-builder-mac-channel-config.test.mjs
++++ b/config/scripts/electron-builder-mac-channel-config.test.mjs
+@@ -12,7 +12,9 @@ const MUTABLE_BUILD_ENV = [
+   'ORCA_HOURLY_BUILD_VERSION',
+   'ORCA_DAILY_BUILD_VERSION',
+   'ORCA_ADHOC_BUILD_VERSION',
+-  'ORCA_LOCAL_BUILD_VERSION'
++  'ORCA_LOCAL_BUILD_VERSION',
++  'CSC_NAME',
++  'CSC_LINK'
+ ]
+ 
+ /** Re-requires the config under a temporary env, then restores env and module cache. */
+@@ -71,18 +73,6 @@ describe('electron-builder mac channel config', () => {
+     expect(electronBuilderConfig.mac.notarize).toBe(false)
+   })
+ 
+-  // Why: the main repo's releases atom feed exposes only its 10 newest entries.
+-  // Publishing 24 hourly tags a day there would evict every stable/RC entry and
+-  // break update checks for every real user.
+-  it('publishes hourly builds to the separate hourly repo', () => {
+-    withHourlyEnv((config) => {
+-      expect(config.publish).toMatchObject({ repo: 'orca-hourly', releaseType: 'prerelease' })
+-    })
+-    expect(electronBuilderConfig.publish).toMatchObject({
+-      repo: 'orca',
+-      releaseType: 'draft'
+-    })
+-  })
+ 
+   it('stamps hourly packages with the hourly version', () => {
+     withEnv(
+@@ -93,16 +83,12 @@ describe('electron-builder mac channel config', () => {
+     )
+   })
+ 
+-  // Why adhoc carries the identical mac identity to hourly: it installs over a
+-  // real Orca through the same updater path, so the same signing and the same TCC
+-  // argument apply. Only the destination repo differs.
+-  it('builds adhoc artifacts with the release identity and its own repo', () => {
++  it('builds adhoc artifacts with the release identity', () => {
+     withAdhocEnv((config) => {
+       expect(config.appId).toBe('com.stablyai.orca')
+       expect(config.mac.hardenedRuntime).toBe(true)
+       expect(config.mac.notarize).toBe(true)
+       expect(config.forceCodeSigning).toBe(true)
+-      expect(config.publish).toMatchObject({ repo: 'orca-adhoc', releaseType: 'prerelease' })
+     })
+   })
+ 
+@@ -115,13 +101,26 @@ describe('electron-builder mac channel config', () => {
+     )
+   })
+ 
+-  it('builds daily artifacts with the release identity and its own repo', () => {
++  it('builds daily artifacts with the release identity', () => {
+     withDailyEnv((config) => {
+       expect(config.appId).toBe('com.stablyai.orca')
+       expect(config.mac.hardenedRuntime).toBe(true)
+       expect(config.mac.notarize).toBe(true)
+       expect(config.forceCodeSigning).toBe(true)
+-      expect(config.publish).toMatchObject({ repo: 'orca-daily', releaseType: 'prerelease' })
++    })
++  })
++
++  it('signs a local build with the identity it is given and refuses an ad-hoc fallback', () => {
++    withEnv({ ORCA_LOCAL_BUILD_VERSION: '1.4.215-local.1.0123456789ab', CSC_NAME: 'Orca Dev' }, (config) => {
++      expect(config.forceCodeSigning).toBe(true)
++      expect(config.mac.identity).toBeUndefined()
++    })
++  })
++
++  it('leaves a local build without an identity unsigned', () => {
++    withEnv({ ORCA_LOCAL_BUILD_VERSION: '1.4.215-local.1.0123456789ab' }, (config) => {
++      expect(config.forceCodeSigning).toBe(false)
++      expect(config.mac.identity).toBeNull()
+     })
+   })
+ 
+@@ -134,19 +133,4 @@ describe('electron-builder mac channel config', () => {
+     )
+   })
+ 
+-  // Why: the dev channels share every packaging decision except where they
+-  // publish, so a future edit that collapses them must not also collapse the
+-  // repos — a branch or daily build landing in orca-hourly would be offered to
+-  // everyone riding main's hourlies.
+-  it('keeps the dev channels on separate repos', () => {
+-    withHourlyEnv((hourly) => {
+-      withDailyEnv((daily) => {
+-        withAdhocEnv((adhoc) => {
+-          expect(new Set([hourly.publish.repo, daily.publish.repo, adhoc.publish.repo]).size).toBe(
+-            3
+-          )
+-        })
+-      })
+-    })
+-  })
+ })
+diff --git a/config/scripts/install-dev-cli.mjs b/config/scripts/install-dev-cli.mjs
+index 3623f2a317c856200b0816b339aed36b4fe90a67..315e99baee33cb24520f6c299276d5b0d3e0a5d8 100644
+--- a/config/scripts/install-dev-cli.mjs
++++ b/config/scripts/install-dev-cli.mjs
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env node
+ // Symlinks the orca-dev wrapper into /usr/local/bin so the dev CLI is
+-// available globally after `pnpm run build:cli`.
++// available globally when explicitly invoked; build:cli never installs it.
+ import { existsSync, lstatSync, readlinkSync } from 'node:fs'
+ import { execFileSync } from 'node:child_process'
+ import path from 'node:path'
+diff --git a/config/scripts/verify-dev-channel-packaging.mjs b/config/scripts/verify-dev-channel-packaging.mjs
+index 7f2067552d5b77b2a6556307ae407a885ea9d10e..df7be3013ba63d85f2b28632ee9acb9f17ac2256 100644
+--- a/config/scripts/verify-dev-channel-packaging.mjs
++++ b/config/scripts/verify-dev-channel-packaging.mjs
+@@ -1,25 +1,10 @@
+ #!/usr/bin/env node
+-// Why this exists: the dev-channel workflows run from main, but they build (and
+-// therefore read `config/electron-builder.config.cjs` from) whatever ref was
+-// asked for. A branch cut before Windows dev builds landed has a config that
+-// ignores ORCA_WIN_*, which would resolve `publish.repo` to the *main* repo and
+-// leave the release identity signed-looking. Publishing would then fail deep
+-// inside electron-builder with a 404 from a token scoped to the dev repo — or,
+-// worse, succeed against a repo it was never meant to touch.
+-//
+-// So: load the config exactly as electron-builder will, and assert the identity
+-// it produced matches the channel and platform the workflow believes it is
+-// building. Runs before packaging, fails with a sentence someone can act on.
++// Validate channel version and signing metadata without enabling upstream publication.
+ 
+ import { createRequire } from 'node:module'
+ import { resolve } from 'node:path'
+ import { pathToFileURL } from 'node:url'
+ 
+-const CHANNEL_REPOS = {
+-  hourly: 'orca-hourly',
+-  daily: 'orca-daily',
+-  adhoc: 'orca-adhoc'
+-}
+ 
+ const CHANNEL_VERSION_ENV = {
+   hourly: 'ORCA_HOURLY_BUILD_VERSION',
+@@ -29,29 +14,17 @@ const CHANNEL_VERSION_ENV = {
+ 
+ export function collectDevChannelPackagingProblems({ channel, platform, config, env }) {
+   const problems = []
+-  const expectedRepo = CHANNEL_REPOS[channel]
+-  if (!expectedRepo) {
++  if (!Object.hasOwn(CHANNEL_VERSION_ENV, channel)) {
+     return [
+-      `Unknown dev channel "${channel}"; expected one of ${Object.keys(CHANNEL_REPOS).join(', ')}.`
++      `Unknown dev channel "${channel}"; expected one of ${Object.keys(CHANNEL_VERSION_ENV).join(', ')}.`
+     ]
+   }
+ 
+-  if (config.publish?.repo !== expectedRepo) {
+-    problems.push(
+-      `publish.repo is "${config.publish?.repo}" but this ${channel} build must publish to "${expectedRepo}". ` +
+-        `The checked-out ref's electron-builder config does not understand this channel on ${platform} — rebase it onto a main that does.`
+-    )
+-  }
+-
+-  if (config.publish?.releaseType !== 'prerelease') {
+-    problems.push(
+-      `publish.releaseType is "${config.publish?.releaseType}" but dev-channel builds must publish as "prerelease".`
+-    )
++  if (config.publish !== null) {
++    problems.push('publish must be null; fork builds never publish through electron-builder.')
+   }
+ 
+-  // Why version too: `extraMetadata.version` is what stamps the tag the workflow
+-  // already created. A config that dropped it would package package.json's
+-  // version and upload into the wrong release entirely.
++  // The effective package version must match the requested channel version.
+   const expectedVersion = env[CHANNEL_VERSION_ENV[channel]]
+   if (expectedVersion && config.extraMetadata?.version !== expectedVersion) {
+     problems.push(
+@@ -112,9 +85,7 @@ function main() {
+     }
+     process.exit(1)
+   }
+-  console.log(
+-    `Dev-channel packaging verified: ${channel} on ${platform} → stablyai/${CHANNEL_REPOS[channel]} @ ${config.extraMetadata?.version}`
+-  )
++  console.log(`Dev-channel packaging verified: ${channel} on ${platform} @ ${config.extraMetadata?.version}; publishing disabled`)
+ }
+ 
+ // Why the guard: the test imports the pure collector without running the CLI.
+diff --git a/config/scripts/verify-dev-channel-packaging.test.mjs b/config/scripts/verify-dev-channel-packaging.test.mjs
+index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac954302c5926b8 100644
+--- a/config/scripts/verify-dev-channel-packaging.test.mjs
++++ b/config/scripts/verify-dev-channel-packaging.test.mjs
+@@ -39,8 +39,6 @@ describe('electron-builder dev-channel identity', () => {
+ 
+     expect(config.win.signtoolOptions.publisherName).toBe('SignPath Foundation')
+     expect(config.win.verifyUpdateCodeSignature).toBeUndefined()
+-    expect(config.publish.repo).toBe('orca')
+-    expect(config.publish.releaseType).toBe('draft')
+   })
+ 
+   // The whole point of the change: an unsigned build that advertised a
+@@ -66,16 +64,6 @@ describe('electron-builder dev-channel identity', () => {
+     expect(loadConfigWithEnv(WIN_ADHOC_ENV).win.signtoolOptions.publisherName).toBeUndefined()
+   })
+ 
+-  it.each([
+-    ['hourly', { ORCA_WIN_HOURLY: '1' }, 'orca-hourly'],
+-    ['daily', { ORCA_WIN_DAILY: '1' }, 'orca-daily'],
+-    ['adhoc', { ORCA_WIN_ADHOC: '1' }, 'orca-adhoc']
+-  ])('publishes %s Windows builds to its own repo as a prerelease', (_channel, env, repo) => {
+-    const config = loadConfigWithEnv(env)
+-
+-    expect(config.publish.repo).toBe(repo)
+-    expect(config.publish.releaseType).toBe('prerelease')
+-  })
+ 
+   // Why: ORCA_MAC_* gates hardened runtime, notarization, and root-level
+   // forceCodeSigning. If the Windows variables leaked into that, the Windows job
+@@ -95,13 +83,12 @@ describe('electron-builder dev-channel identity', () => {
+     })
+ 
+     expect(config.mac.notarize).toBe(true)
+-    expect(config.publish.repo).toBe('orca-adhoc')
+   })
+ })
+ 
+ describe('collectDevChannelPackagingProblems', () => {
+   const goodWinConfig = {
+-    publish: { repo: 'orca-adhoc', releaseType: 'prerelease' },
++    publish: null,
+     extraMetadata: { version: '1.4.178-adhoc.20260819010203' },
+     win: { verifyUpdateCodeSignature: false }
+   }
+@@ -118,9 +105,7 @@ describe('collectDevChannelPackagingProblems', () => {
+     ).toEqual([])
+   })
+ 
+-  // The failure this script exists for: a branch predating Windows dev builds
+-  // resolves publish.repo to the main repo.
+-  it('rejects a config that resolved the main repo', () => {
++  it('rejects a config that enables electron-builder publishing', () => {
+     const problems = collectDevChannelPackagingProblems({
+       channel: 'adhoc',
+       platform: 'win32',
+@@ -128,8 +113,7 @@ describe('collectDevChannelPackagingProblems', () => {
+       env
+     })
+ 
+-    expect(problems.join('\n')).toContain('must publish to "orca-adhoc"')
+-    expect(problems.join('\n')).toContain('rebase it onto a main that does')
++    expect(problems.join('\n')).toContain('publish must be null')
+   })
+ 
+   it('rejects a Windows dev build that still advertises a publisherName', () => {
+@@ -165,7 +149,7 @@ describe('collectDevChannelPackagingProblems', () => {
+         channel: 'adhoc',
+         platform: 'darwin',
+         config: {
+-          publish: { repo: 'orca-adhoc', releaseType: 'prerelease' },
++          publish: null,
+           extraMetadata: { version: '1.4.178-adhoc.20260819010203' },
+           win: { signtoolOptions: { publisherName: 'SignPath Foundation' } }
+         },
+diff --git a/config/scripts/verify-release-required-assets.mjs b/config/scripts/verify-release-required-assets.mjs
+index cc0c986ff65966f05f5f1ed1ddcd0b215ebf2061..67179c03fca028549b94c629f87d3ab81d01ea15 100644
+--- a/config/scripts/verify-release-required-assets.mjs
++++ b/config/scripts/verify-release-required-assets.mjs
+@@ -13,20 +13,14 @@ export function getRequiredReleaseAssetNames(tag) {
+     'latest.yml',
+     'orca-linux.AppImage',
+     'orca-linux-arm64.AppImage',
+-    `orca-ide_${version}_amd64.deb`,
+-    `orca-ide_${version}_arm64.deb`,
++    'orca-linux-x64.deb',
++    'orca-linux-arm64.deb',
+     `orca-ide-${version}.x86_64.rpm`,
+     `orca-ide-${version}.aarch64.rpm`,
+     'orca-windows-setup.exe',
+     'orca-windows-setup.exe.blockmap',
+-    `Orca-${version}-mac.zip`,
+-    `Orca-${version}-mac.zip.blockmap`,
+-    `Orca-${version}-arm64-mac.zip`,
+-    `Orca-${version}-arm64-mac.zip.blockmap`,
+-    'orca-macos-x64.dmg',
+-    'orca-macos-x64.dmg.blockmap',
+-    'orca-macos-arm64.dmg',
+-    'orca-macos-arm64.dmg.blockmap'
++    'orca-macos-arm64.zip',
++    'orca-macos-arm64.zip.blockmap'
+   ]
+ }
+ 
+diff --git a/config/scripts/verify-release-required-assets.test.mjs b/config/scripts/verify-release-required-assets.test.mjs
+index 9b593f5716ab099edcab62719f4e45911f85512d..910004ae6d4347de4751360b8ac8cb9dcaf333f7 100644
+--- a/config/scripts/verify-release-required-assets.test.mjs
++++ b/config/scripts/verify-release-required-assets.test.mjs
+@@ -33,32 +33,6 @@ afterEach(() => {
+   vi.unstubAllGlobals()
+ })
+ 
+-describe('getRequiredReleaseAssetNames', () => {
+-  it('includes both mac updater ZIP names for the tag version', () => {
+-    expect(getRequiredReleaseAssetNames('v1.4.27')).toEqual(
+-      expect.arrayContaining([
+-        'Orca-1.4.27-mac.zip',
+-        'Orca-1.4.27-mac.zip.blockmap',
+-        'Orca-1.4.27-arm64-mac.zip',
+-        'Orca-1.4.27-arm64-mac.zip.blockmap'
+-      ])
+-    )
+-  })
+-
+-  it('includes x64 and arm64 Linux assets', () => {
+-    expect(getRequiredReleaseAssetNames('v1.4.27')).toEqual(
+-      expect.arrayContaining([
+-        'latest-linux-arm64.yml',
+-        'orca-linux.AppImage',
+-        'orca-linux-arm64.AppImage',
+-        'orca-ide_1.4.27_amd64.deb',
+-        'orca-ide_1.4.27_arm64.deb',
+-        'orca-ide-1.4.27.x86_64.rpm',
+-        'orca-ide-1.4.27.aarch64.rpm'
+-      ])
+-    )
+-  })
+-})
+ 
+ describe('extractManifestAssetNames', () => {
+   it('extracts relative and absolute manifest asset names', () => {
+@@ -66,12 +40,12 @@ describe('extractManifestAssetNames', () => {
+       extractManifestAssetNames(
+         [
+           'files:',
+-          '  - url: Orca-1.4.27-arm64-mac.zip',
++          '  - url: orca-macos-arm64.zip',
+           '  - url: https://example.com/downloads/orca-windows-setup.exe',
+           'path: orca-linux.AppImage'
+         ].join('\n')
+       )
+-    ).toEqual(['Orca-1.4.27-arm64-mac.zip', 'orca-windows-setup.exe', 'orca-linux.AppImage'])
++    ).toEqual(['orca-macos-arm64.zip', 'orca-windows-setup.exe', 'orca-linux.AppImage'])
+   })
+ })
+ 
+@@ -79,7 +53,7 @@ describe('verifyRequiredReleaseAssets', () => {
+   it('fails when a manifest-referenced asset has not been uploaded', async () => {
+     const tag = 'v1.4.27'
+     const required = getRequiredReleaseAssetNames(tag)
+-    const assets = required.filter((name) => name !== 'Orca-1.4.27-arm64-mac.zip')
++    const assets = required.filter((name) => name !== 'orca-macos-arm64.zip')
+     const release = releaseWithAssets(tag, assets)
+     const latestMacAsset = release.assets.find((asset) => asset.name === 'latest-mac.yml')
+     const fetchMock = vi
+@@ -90,9 +64,9 @@ describe('verifyRequiredReleaseAssets', () => {
+           [
+             'version: 1.4.27',
+             'files:',
+-            '  - url: Orca-1.4.27-arm64-mac.zip',
++            '  - url: orca-macos-arm64.zip',
+             '    sha512: test',
+-            'path: Orca-1.4.27-arm64-mac.zip'
++            'path: orca-macos-arm64.zip'
+           ].join('\n')
+         )
+       )
+@@ -101,7 +75,7 @@ describe('verifyRequiredReleaseAssets', () => {
+ 
+     await expect(
+       verifyRequiredReleaseAssets({ repo: 'stablyai/orca', tag, token: 'token' })
+-    ).rejects.toThrow('Missing: Orca-1.4.27-arm64-mac.zip')
++    ).rejects.toThrow('Missing: orca-macos-arm64.zip')
+     expect(latestMacAsset).toBeTruthy()
+   })
+ 
+diff --git a/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs b/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
+index fd9e1790d5606d87f73d4e69d0aeb6f58709ad98..ac8ed0c7ee0e567e11d38dc5c1fb7137e1c2d301 100644
+--- a/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
++++ b/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
+@@ -29,14 +29,9 @@ const WINDOWS_SHIM_SPAWN_ALLOWLIST = [
+   'config/scripts/dev-cli-terminal-wrapper.mjs',
+   'config/scripts/dev-cli-terminal-wrapper.test.mjs',
+   'config/scripts/electron-builder-config.test.mjs',
+-  'config/scripts/ensure-native-runtime.test.mjs',
+   'config/scripts/live-remote-freeze-rpc.mjs',
+   'config/scripts/pty-transcript-secret-scan.test.mjs',
+   'config/scripts/remote-agent-session-authority-repro.mjs',
+-  // Platform-local build paths; the win32 branch is dead code on both.
+-  'config/scripts/build-mac-local.mjs',
+-  'config/scripts/build-linux-local.mjs',
+-  'config/scripts/build-linux-local.test.mjs',
+   // Benchmarks, repros and e2e drivers — developer-invoked or Linux-only in CI.
+   'config/scripts/build-orcad-prebuilds.mjs',
+   'config/scripts/run-ai-vault-typing-bench.mjs',
+diff --git a/docs/reference/linux-glibc-compatibility.md b/docs/reference/linux-glibc-compatibility.md
+index 64e72a67b839f5d64e252b29c60c30cd47e0a6b6..89d6b981119056a25200674ec0a5c47fdbf59d5f 100644
+--- a/docs/reference/linux-glibc-compatibility.md
++++ b/docs/reference/linux-glibc-compatibility.md
+@@ -14,6 +14,11 @@ Fedora/RHEL, or `rpm` through Homebrew on macOS, then verify it with
+ `rpmbuild --version` before packaging. Cross-host builds have the same
+ requirement.
+ 
++The HarnessOS x64 Debian artifact is `dist/orca-linux-x64.deb`. Its resources
++include `orca-fork-build.json` naming the full workbench HEAD. Before publication,
++the confined builder must qualify those exact bytes for tailnet-only binding;
++ordinary development builds and loopback-only probes do not qualify an artifact.
++
+ ## Why this needs attention
+ 
+ A native module (`.node`) links against the glibc of the machine that compiled
+diff --git a/docs/reference/pnpm-install-policy.md b/docs/reference/pnpm-install-policy.md
+index 6e53ecac77a9095386718f04283fd249da986175..e57d2c62f5b92db3ff3e3d46a725d8ce2c3927b2 100644
+--- a/docs/reference/pnpm-install-policy.md
++++ b/docs/reference/pnpm-install-policy.md
+@@ -5,9 +5,9 @@ and CPU only. This applies to local development and root-project CI jobs,
+ including jobs using `.github/actions/install-node-dependencies`. Mobile and
+ cloud projects with their own workspace configuration are separate.
+ 
+-The one cross-target build in the repo is macOS: `pnpm build:mac` and the four
+-macOS packaging workflows produce both x64 and arm64 artifacts from an arm64
+-runner. Before packaging for another architecture, widen the CPU set:
++Local `pnpm build:mac` targets arm64 only. Upstream macOS packaging workflows
++can still target both CPUs. Before explicitly packaging another architecture,
++widen the CPU set:
+ 
+ ```sh
+ pnpm install:release
+diff --git a/package.json b/package.json
+index 53b2a86d1f0bc800f40db9d5478f90b80d04171a..a0f523fe735947f8f8dd340a8d15d5782b386f10 100644
+--- a/package.json
++++ b/package.json
+@@ -88,7 +88,7 @@
+     "verify:localization-extraction": "node config/scripts/verify-localization-extraction.mjs",
+     "verify:localization-coverage": "node config/scripts/audit-localization-coverage.mjs --check",
+     "audit:localization": "node config/scripts/audit-localization-coverage.mjs",
+-    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json && node config/scripts/install-dev-cli.mjs",
++    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json",
+     "test:linux-cli-contract": "node config/scripts/run-linux-cli-launch-contract-docker.mjs --appimage dist/orca-linux.AppImage",
+     "test:repro:skills-cli-runtime": "pnpm run build:cli && pnpm run build:electron-vite && pnpm run verify:built-skills-cli",
+     "build:electron-vite": "node config/scripts/run-electron-vite-build.mjs",
