@@ -1,0 +1,66 @@
+# Builds the Orca Mac app unsigned for HarnessOS (ADR 0014). The operator Mac pushes one commit carrying
+# inputs/ (the patch series, build manifest, mise.lock and the build script) and dispatches this workflow on
+# it; the script refuses a moved upstream tag, builds and gates the series, and the Mac signs the zip itself.
+name: build
+run-name: ${{ inputs.component }} ${{ inputs.upstream_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Component id
+        required: true
+        type: string
+      upstream_tag:
+        description: Upstream release tag
+        required: true
+        type: string
+      upstream_commit:
+        description: Commit the tag must still name
+        required: true
+        type: string
+      series:
+        description: sha256 of the pushed patch series
+        required: true
+        type: string
+      build:
+        description: sha256 of the pushed build manifest and its locked toolchain
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Check out the build commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Build and gate
+        env:
+          COMPONENT: ${{ inputs.component }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+          UPSTREAM_COMMIT: ${{ inputs.upstream_commit }}
+          SERIES: ${{ inputs.series }}
+          BUILD: ${{ inputs.build }}
+        run: bun inputs/script.js
+      - name: Upload the unsigned zip and its receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
