@@ -1,13 +1,13 @@
 // @bun
 // components/orca/runner/script.ts
-import { copyFileSync as copyFileSync2, cpSync, existsSync as existsSync4, mkdirSync as mkdirSync3, mkdtempSync as mkdtempSync2, readdirSync as readdirSync2, readFileSync as readFileSync3, statSync as statSync2, writeFileSync as writeFileSync3 } from "fs";
+import { copyFileSync as copyFileSync2, cpSync, existsSync as existsSync4, mkdirSync as mkdirSync3, mkdtempSync as mkdtempSync3, readdirSync as readdirSync2, readFileSync as readFileSync3, statSync as statSync2, writeFileSync as writeFileSync3 } from "fs";
 import { tmpdir as tmpdir2 } from "os";
-import { basename, join as join3, resolve as resolve5 } from "path";
+import { basename as basename2, join as join3, resolve as resolve5 } from "path";
 import { gunzipSync, zstdDecompressSync } from "zlib";
 
 // scripts/patches/build.ts
-import { chmodSync, copyFileSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync as realpathSync2, rmSync as rmSync2, statSync, writeFileSync as writeFileSync2 } from "fs";
-import { delimiter, dirname as dirname2, isAbsolute as isAbsolute2, join as join2, relative as relative2, resolve as resolve4, sep } from "path";
+import { chmodSync, closeSync, copyFileSync, existsSync as existsSync3, fchmodSync, mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync2, openSync, readFileSync as readFileSync2, realpathSync as realpathSync2, rmSync as rmSync2, statSync, writeFileSync as writeFileSync2 } from "fs";
+import { basename, delimiter, dirname as dirname2, isAbsolute as isAbsolute2, join as join2, relative as relative2, resolve as resolve4, sep } from "path";
 
 // node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
@@ -5843,9 +5843,21 @@ var platform = object({
   runner: runner.optional(),
   toolchain: record(text, text).refine((value) => Object.keys(value).length > 0, "toolchain is required"),
   dependencies: array(dependency).min(1),
-  steps: array(command.extend({ id: text, series: literal(true).optional(), env: stepEnv.optional() }).strict()).min(1),
+  steps: array(command.extend({
+    id: text,
+    series: literal(true).optional(),
+    env: stepEnv.optional(),
+    outputs: array(object({ path: relativePath, from: relativePath }).strict()).min(1).optional()
+  }).strict().refine((step) => !step.outputs || step.series, "outputs belong to a series step")).min(1),
   artifacts: array(artifact).min(1)
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const modules = value.dependencies.map((dep) => dep.cwd === "." ? "node_modules/" : `${dep.cwd}/node_modules/`);
+  for (const step of value.steps)
+    for (const output of step.outputs ?? []) {
+      if (!modules.some((prefix) => output.from.startsWith(prefix)))
+        ctx.addIssue({ code: "custom", message: `${step.id}: outputs copy only from a declared dependency's node_modules, not ${output.from}` });
+    }
+});
 var gateTest = command.extend({
   id: text,
   files: array(relativePath).min(1),
@@ -6087,6 +6099,10 @@ pristine comparison unavailable: ${pristine.detail}` });
 
 // scripts/patches/build.ts
 var quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+var outside = (root, path) => {
+  const rel = relative2(root, path);
+  return isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`);
+};
 
 class BuildProblem extends Error {
   problem;
@@ -6131,8 +6147,8 @@ function preparedToolchain(toolchain) {
     const paths = Array.from(toolchain.paths, (path) => {
       if (typeof path !== "string" || !isAbsolute2(path) || path.includes(delimiter) || path.includes("\x00"))
         return invalid("prepared tool paths must be absolute PATH directories");
-      const real = realpathSync2(path), rel = relative2(root, real);
-      if (isAbsolute2(rel) || rel === ".." || rel.startsWith(`..${sep}`) || !statSync(real).isDirectory())
+      const real = realpathSync2(path);
+      if (outside(root, real) || !statSync(real).isDirectory())
         return invalid("prepared tool path escaped its root or is not a directory");
       if (real.includes(delimiter))
         return invalid("prepared tool path cannot contain the PATH delimiter");
@@ -6186,7 +6202,21 @@ ${Object.entries(config.toolchain).map(([tool, version]) => `${JSON.stringify(to
   }
   return env;
 }
-function guardDependencies(root, env) {
+var npxGuard = (installs) => [
+  '[ "$1" = --yes ] && shift',
+  'case "$1" in [A-Za-z0-9]*) ;; *) refuse;; esac',
+  'case "$1" in *[!A-Za-z0-9._-]*) refuse;; esac',
+  "prefix=$(pwd -P)",
+  'until [ -z "$prefix" ] || [ -f "$prefix/package.json" ] || [ -d "$prefix/node_modules" ]; do prefix=${prefix%/*}; done',
+  installs.length ? `case "$prefix" in ${installs.map(quote).join("|")}) ;; *) refuse;; esac` : "refuse",
+  'bin="$prefix/node_modules/.bin/$1"',
+  '[ -f "$bin" ] && [ -x "$bin" ] || refuse',
+  "shift",
+  'exec "$bin" "$@"',
+  ""
+].join(`
+`);
+function guardDependencies(root, env, installs) {
   const guards = join2(root, "dependency-guards"), violation = join2(root, "unfrozen-dependency"), missing = new Set;
   mkdirSync2(guards);
   for (const [manager, rule] of Object.entries(packageManagerRules)) {
@@ -6208,10 +6238,10 @@ function guardDependencies(root, env) {
     const cwd = leading ? `cwd=
 case "$1" in ${leading}) cwd="$1"; shift;; esac
 ` : "", at = leading ? ' ${cwd:+"$cwd"}' : "";
-    const script = `#!/bin/sh
-command=${quote(manager)}" $*"
-refuse() { printf 'unfrozen dependency resolution: %s\\n' "$command" > ${quote(violation)}; printf 'unfrozen dependency resolution: %s\\n' "$command" >&2; exit 86; }
-${cwd}case "$1" in
+    const absent = `printf '%s\\n' '${manager} is not in the declared toolchain' >&2
+exit 127
+`;
+    const guard = manager === "npx" ? target ? npxGuard(installs) : absent : `${cwd}case "$1" in
 ${policy}
 esac
 ` + (target ? manager === "bun" ? `case "$1" in
@@ -6220,9 +6250,11 @@ esac
 for arg in "$@"; do case "$arg" in --install|--install=*|-i) refuse;; esac; done
 exec ${quote(target)}${at} --no-install "$@"
 ` : `exec ${quote(target)}${at} "$@"
-` : `printf '%s\\n' '${manager} is not in the declared toolchain' >&2
-exit 127
-`);
+` : absent);
+    const script = `#!/bin/sh
+command=${quote(manager)}" $*"
+refuse() { printf 'unfrozen dependency resolution: %s\\n' "$command" > ${quote(violation)}; printf 'unfrozen dependency resolution: %s\\n' "$command" >&2; exit 86; }
+${guard}`;
     writeFileSync2(join2(guards, manager), script);
     chmodSync(join2(guards, manager), 493);
   }
@@ -6297,7 +6329,8 @@ async function runBuild(input) {
       }
     };
     const toolEnv = await prepareToolchain(request, config, execute);
-    const guarded = guardDependencies(request.workRoot, toolEnv);
+    const physicalRoot = realpathSync2(request.workRoot);
+    const guarded = guardDependencies(request.workRoot, toolEnv, ["patched", "pristine"].flatMap((tree) => config.dependencies.map((dependency) => join2(physicalRoot, tree, dependency.cwd))));
     const registryTime = await git.text(request.mirror, ["show", "-s", "--format=%cI", request.upstreamCommit]);
     const environments = new Map;
     const locks = new Map;
@@ -6313,8 +6346,7 @@ async function runBuild(input) {
           return { code: 1, stdout: "", stderr: `command cwd is absent: ${step.cwd}`, ...gate ? { unavailable: "cwd" } : {} };
         throw error;
       }
-      const rel = relative2(realpathSync2(tree), cwd);
-      if (isAbsolute2(rel) || rel === ".." || rel.startsWith("../"))
+      if (outside(realpathSync2(tree), cwd))
         throw new BuildProblem({ verdict: "fail", reason: "manifest", detail: "command cwd escaped workbench" });
       let env = environments.get(tree);
       if (!env) {
@@ -6335,6 +6367,7 @@ async function runBuild(input) {
           throw new BuildProblem({ verdict: "fail", reason: "frozen-lockfile", detail: `step changed upstream lockfile ${relative2(tree, path)}` });
       return result;
     };
+    const held = new Map;
     const buildTree = async (tree) => {
       const originals = new Map;
       for (const dependency of config.dependencies) {
@@ -6342,15 +6375,81 @@ async function runBuild(input) {
         try {
           path = treeFile(tree, join2(dependency.cwd, dependency.lockfile));
         } catch {
-          return { verdict: "fail", reason: "frozen-lockfile", detail: `missing upstream lockfile ${dependency.cwd}/${dependency.lockfile}` };
+          return { problem: { verdict: "fail", reason: "frozen-lockfile", detail: `missing upstream lockfile ${dependency.cwd}/${dependency.lockfile}` }, seriesStep: false };
         }
         originals.set(path, readFileSync2(path));
       }
       locks.set(tree, originals);
-      for (const step of [...config.dependencies.map(frozenInstall), ...config.steps.filter((step) => tree === patched || !step.series)]) {
+      const stepProblem = (step, result) => environmentalFailure(result) ?? { verdict: "fail", reason: "build", detail: `${step.argv.join(" ")}: ${result.stderr || result.stdout}` };
+      for (const step of config.dependencies.map(frozenInstall)) {
         const result = await command(tree, step);
         if (result.code)
-          return environmentalFailure(result) ?? { verdict: "fail", reason: "build", detail: `${step.argv.join(" ")}: ${result.stderr || result.stdout}` };
+          return { problem: stepProblem(step, result), seriesStep: false };
+      }
+      const digestOf = (path) => {
+        try {
+          return sha256(readFileSync2(treeFile(tree, path)));
+        } catch {
+          return;
+        }
+      };
+      const installed = new Map;
+      if (tree === patched)
+        for (const step of config.steps)
+          for (const output of step.outputs ?? [])
+            installed.set(output.from, digestOf(output.from));
+      for (const step of config.steps) {
+        if (step.series && tree !== patched) {
+          if (!step.outputs)
+            continue;
+          const copies = held.get(step.id);
+          if (!copies)
+            return;
+          for (const [i, output] of step.outputs.entries()) {
+            let dir;
+            try {
+              dir = realpathSync2(dirname2(join2(tree, output.path)));
+            } catch {
+              dir = undefined;
+            }
+            if (!dir || outside(realpathSync2(tree), dir) || !statSync(dir).isDirectory())
+              throw new BuildProblem({ verdict: "unverified", reason: "upstream-build", detail: `the pristine tree has no directory for output ${output.path}` });
+            const { file, sha256: digest, mode } = copies[i], bytes = readFileSync2(file), target = join2(dir, basename(output.path));
+            if (sha256(bytes) !== digest)
+              throw new BuildProblem({ verdict: "unverified", reason: "snapshot-mismatch", detail: `held output ${output.path} changed before the pristine retry` });
+            rmSync2(target, { force: true });
+            const fd = openSync(target, "wx", mode);
+            try {
+              writeFileSync2(fd, bytes);
+              fchmodSync(fd, mode);
+            } finally {
+              closeSync(fd);
+            }
+          }
+          continue;
+        }
+        const result = await command(tree, step);
+        if (result.code)
+          return { problem: stepProblem(step, result), seriesStep: !!step.series };
+        if (!step.outputs)
+          continue;
+        const matching = (output) => {
+          try {
+            const path = treeFile(tree, output.path), bytes = readFileSync2(path);
+            return sha256(bytes) === installed.get(output.from) ? { bytes, mode: statSync(path).mode & 511 } : undefined;
+          } catch {
+            return;
+          }
+        };
+        const dir = mkdtempSync2(join2(request.workRoot, "held-")), copies = [];
+        for (const [i, output] of step.outputs.entries()) {
+          const match = matching(output);
+          if (!match)
+            return { problem: { verdict: "fail", reason: "build", detail: `${step.id} left no copy of ${output.from} at ${output.path}` }, seriesStep: true };
+          copies.push({ file: join2(dir, String(i)), sha256: sha256(match.bytes), mode: match.mode });
+          writeFileSync2(copies[i].file, match.bytes, { flag: "wx" });
+        }
+        held.set(step.id, copies);
       }
     };
     const collect = (tree) => config.artifacts.flatMap((item) => {
@@ -6376,7 +6475,7 @@ async function runBuild(input) {
       if (await git.text(tree, ["rev-parse", "HEAD"]) !== request.upstreamCommit)
         return pristineResult = moved("pristine replay base differs from the pinned upstream commit");
       try {
-        const problem = await buildTree(tree);
+        const problem = (await buildTree(tree))?.problem;
         pristineResult = problem ? problem.verdict === "unverified" ? problem : { verdict: "unverified", reason: "upstream-build", detail: problem.detail } : { tree, artifacts: collect(tree) };
       } catch (error) {
         if (!(error instanceof BuildProblem))
@@ -6385,12 +6484,14 @@ async function runBuild(input) {
       }
       return pristineResult;
     };
-    const buildProblem = await buildTree(patched);
-    if (buildProblem) {
-      if (buildProblem.verdict === "unverified" || buildProblem.reason === "frozen-lockfile")
-        return failure(buildProblem, provenance);
+    const failed = await buildTree(patched);
+    if (failed) {
+      const { problem } = failed;
+      if (problem.verdict === "unverified" || problem.reason === "frozen-lockfile" || failed.seriesStep)
+        return failure(problem, provenance);
       const retry = await pristine();
-      return failure("verdict" in retry ? retry : buildProblem, provenance);
+      return failure("verdict" in retry ? { ...retry, detail: `${problem.detail}
+pristine retry: ${retry.detail}` } : problem, provenance);
     }
     const artifacts = collect(patched);
     let gate;
@@ -6467,7 +6568,7 @@ async function installMise(lock, directory) {
     throw new Error("unverified/snapshot-mismatch: the mise download differs from mise.lock");
   const tar = pinned.url.endsWith(".tar.zst") ? zstdDecompressSync(archive) : pinned.url.endsWith(".tar.gz") ? gunzipSync(archive) : undefined;
   if (!tar)
-    throw new Error(`unverified/build-wrapper: unsupported mise archive ${basename(pinned.url)}`);
+    throw new Error(`unverified/build-wrapper: unsupported mise archive ${basename2(pinned.url)}`);
   mkdirSync3(directory, { recursive: true });
   writeFileSync3(join3(directory, "mise.tar"), tar);
   const extracted = Bun.spawnSync(["tar", "-xf", join3(directory, "mise.tar"), "-C", directory], { stdout: "ignore", stderr: "pipe" });
@@ -6480,7 +6581,7 @@ async function installMise(lock, directory) {
         const found = find(path);
         if (found)
           return found;
-      } else if (name === "mise" && basename(dir) === "bin")
+      } else if (name === "mise" && basename2(dir) === "bin")
         return path;
     }
   };
@@ -6497,8 +6598,8 @@ async function runHosted(options) {
   const finish = (result) => {
     const artifacts = result.verdict === "ok" ? result.artifacts : [];
     for (const artifact of artifacts)
-      copyFileSync2(artifact.path, join3(out, basename(artifact.path)));
-    const receipt = { component, platform: PLATFORM, upstreamTag, upstreamCommit, series, build, result: { ...result, artifacts: artifacts.map((artifact) => ({ ...artifact, path: basename(artifact.path) })) } };
+      copyFileSync2(artifact.path, join3(out, basename2(artifact.path)));
+    const receipt = { component, platform: PLATFORM, upstreamTag, upstreamCommit, series, build, result: { ...result, artifacts: artifacts.map((artifact) => ({ ...artifact, path: basename2(artifact.path) })) } };
     writeFileSync3(join3(out, RECEIPT), `${JSON.stringify(receipt, null, 2)}
 `);
     return result.verdict === "ok" ? 0 : 1;
@@ -6534,7 +6635,7 @@ async function runHosted(options) {
         return { code, stdout, stderr };
       }
     };
-    const tempRoot = mkdtempSync2(existsSync4("/tmp") ? "/tmp/hos-" : join3(tmpdir2(), "hos-"));
+    const tempRoot = mkdtempSync3(existsSync4("/tmp") ? "/tmp/hos-" : join3(tmpdir2(), "hos-"));
     return finish(await runBuild({
       component,
       sourceRoot: source,
