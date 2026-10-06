@@ -432,10 +432,26 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
    )
  }
 diff --git a/src/renderer/src/components/status-bar/StatusBarSurface.tsx b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
-index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b038ad6a39 100644
+index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..28a42b687a4c311aed5cf945a8f57a08bd7c440a 100644
 --- a/src/renderer/src/components/status-bar/StatusBarSurface.tsx
 +++ b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
-@@ -75,7 +75,7 @@ export function StatusBarSurface({
+@@ -1,5 +1,6 @@
+ import { PanelsTopLeft, RefreshCw } from 'lucide-react'
+ import React from 'react'
++import { useTranslation } from 'react-i18next'
+ import { lazyWithRetry } from '@/lib/lazy-with-retry'
+ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+ import {
+@@ -54,6 +55,8 @@ export type StatusBarProps = {
+ export function StatusBarSurface({
+   floatingTerminalOpen
+ }: StatusBarProps): React.JSX.Element | null {
++  // Why: StatusBar memoizes this surface, and a lazy catalog can land with no store change.
++  useTranslation()
+   const controller = useStatusBarController(floatingTerminalOpen)
+   if (!controller) {
+     return null
+@@ -75,7 +78,7 @@ export function StatusBarSurface({
      isEmptyUsageState,
      isRefreshing,
      petEnabled,
@@ -444,7 +460,7 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b0
      setMenuOpen,
      setMenuPoint,
      setStatusBarUsageMode,
-@@ -107,7 +107,7 @@ export function StatusBarSurface({
+@@ -107,7 +110,7 @@ export function StatusBarSurface({
          setMenuOpen(true)
        }}
      >
@@ -453,7 +469,7 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b0
          {isEmptyUsageState ? (
            showEmptyUsageCta ? (
              <StatusBarUsageEmptyCta />
-@@ -123,22 +123,27 @@ export function StatusBarSurface({
+@@ -123,22 +126,27 @@ export function StatusBarSurface({
                <DropdownMenuTrigger asChild>
                  <button
                    type="button"
@@ -488,7 +504,7 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b0
                          compact={compact}
                          display={usagePercentageDisplay}
                          mode={statusBarUsageMode}
-@@ -160,7 +165,7 @@ export function StatusBarSurface({
+@@ -160,7 +168,7 @@ export function StatusBarSurface({
                  onCloseAutoFocus={usageMenuFocusHandoff.onCloseAutoFocus}
                >
                  <UsageRosterPanel
@@ -497,7 +513,7 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..92ec120b72109f5b12439318833575b0
                    display={usagePercentageDisplay}
                    statusBarUsageMode={statusBarUsageMode}
                    onStatusBarUsageModeChange={setStatusBarUsageMode}
-@@ -171,10 +176,8 @@ export function StatusBarSurface({
+@@ -171,10 +179,8 @@ export function StatusBarSurface({
                    canSignIn={(provider) => getUsageProviderAccountsSectionId(provider) !== null}
                    onManageAccounts={handleManageAccounts}
                    onUsageDetails={handleUsageDetails}
@@ -1217,6 +1233,152 @@ index 3bab0e1bfcb3b427f08edc1877f03465f6ac0fd7..6bf85db0be2f1f9d7fc8dcee68bf39d3
    })
  
    it('ProviderSegment renders without crashing when a provider window is undefined', async () => {
+diff --git a/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx b/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..8a7dfa38fe207f93e6a47303c436989440cff728
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx
+@@ -0,0 +1,140 @@
++// @vitest-environment happy-dom
++/**
++ * StatusBar is a memo boundary and locale catalogs load lazily, so a language switch can land
++ * with no store change at all. The bar must still repaint its translated copy.
++ */
++import { act, type ReactNode } from 'react'
++import { createRoot, type Root } from 'react-dom/client'
++import { within } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { TooltipProvider } from '@/components/ui/tooltip'
++import { getDefaultSettings } from '../../../../shared/constants'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++import { createEmptyRateLimitState } from '../../../../shared/rate-limit-state-factory'
++import { i18n } from '@/i18n/i18n'
++import type * as StoreSelectors from '../../store/selectors'
++
++const mocks = vi.hoisted(() => ({ state: {} as Record<string, unknown> }))
++
++vi.mock('../../store', () => {
++  const useAppStore = (selector: (state: Record<string, unknown>) => unknown): unknown =>
++    selector(mocks.state)
++  useAppStore.getState = () => mocks.state
++  return { useAppStore }
++})
++
++vi.mock('../../store/selectors', async (importOriginal) => ({
++  ...(await importOriginal<typeof StoreSelectors>()),
++  selectFloatingWorkspaceHasUnread: () => false
++}))
++
++vi.mock('@/hooks/useShortcutLabel', () => ({
++  useShortcutLabel: () => ''
++}))
++
++vi.mock('@/lib/agent-catalog', () => ({
++  AgentIcon: () => null
++}))
++
++// Segments on the right of the bar read their own store slices; they are not under test here.
++vi.mock('./CaffeinateStatusSegment', () => ({ CaffeinateStatusSegment: () => null }))
++vi.mock('./RemoteServerUpdateStatusSegment', () => ({
++  RemoteServerUpdateStatusSegment: () => null
++}))
++vi.mock('./SkillUpdateStatusSegment', () => ({ SkillUpdateStatusSegment: () => null }))
++vi.mock('./NativeChatResumeStatusSegment', () => ({ NativeChatResumeStatusSegment: () => null }))
++vi.mock('./UpdateStatusSegment', () => ({ UpdateStatusSegment: () => null }))
++vi.mock('./StatusBarVisibilityMenu', () => ({ StatusBarVisibilityMenu: () => null }))
++vi.mock('./UsagePercentageDisplayChangeNotice', () => ({
++  UsagePercentageDisplayChangeNotice: ({ children }: { children: ReactNode }) => <>{children}</>
++}))
++
++import { StatusBar } from './StatusBar'
++
++function deferredClaude(): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: null,
++    weekly: null,
++    updatedAt: 1,
++    error: 'Usage refresh deferred by a live Claude session',
++    status: 'error',
++    usageMetadata: { failureKind: 'deferred-by-live-session' }
++  }
++}
++
++function seedDeferredClaudeLane(): void {
++  mocks.state = {
++    settings: getDefaultSettings('/tmp'),
++    rateLimits: createEmptyRateLimitState({ claude: deferredClaude() }),
++    refreshRateLimits: vi.fn(),
++    refreshDetectedAgents: vi.fn(),
++    ensureDetectedAgents: vi.fn(async () => {}),
++    openSettingsTarget: vi.fn(),
++    openSettingsPage: vi.fn(),
++    recordFeatureInteraction: vi.fn(),
++    setStatusBarUsageMode: vi.fn(),
++    toggleStatusBarItem: vi.fn(),
++    usagePercentageDisplay: 'used',
++    statusBarUsageMode: 'verbose',
++    statusBarVisible: true,
++    statusBarItems: ['claude'],
++    detectedAgentIds: ['claude'],
++    usageEmptyStateDismissed: false
++  }
++}
++
++const mountedRoots: Root[] = []
++
++async function renderStatusBar(): Promise<HTMLDivElement> {
++  const container = document.createElement('div')
++  document.body.appendChild(container)
++  const root = createRoot(container)
++  mountedRoots.push(root)
++  await act(async () => {
++    root.render(
++      <TooltipProvider>
++        <StatusBar floatingTerminalOpen={false} />
++      </TooltipProvider>
++    )
++  })
++  return container
++}
++
++describe('status bar after a UI-language switch', () => {
++  beforeEach(async () => {
++    globalThis.IS_REACT_ACT_ENVIRONMENT = true
++    // Why: happy-dom lays out nothing, and under 500px every lane collapses to a letter badge.
++    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
++      new DOMRect(0, 0, 1568, 24)
++    )
++    await i18n.changeLanguage('en')
++    seedDeferredClaudeLane()
++  })
++
++  afterEach(async () => {
++    await act(async () => {
++      for (const root of mountedRoots.splice(0)) {
++        root.unmount()
++      }
++    })
++    document.body.replaceChildren()
++    vi.restoreAllMocks()
++    await i18n.changeLanguage('en')
++  })
++
++  it('renames the usage trigger and relabels its lanes once the new catalog loads', async () => {
++    const container = await renderStatusBar()
++    const englishTrigger = within(container).getByRole('button', { name: 'Usage' })
++    expect(englishTrigger.querySelector('[title="Waiting for credential refresh"]')).not.toBeNull()
++
++    await act(async () => {
++      await i18n.changeLanguage('fr')
++    })
++
++    const frenchTrigger = within(container).getByRole('button', { name: 'Utilisation' })
++    expect(
++      frenchTrigger.querySelector('[title="En attente du renouvellement des identifiants"]')
++    ).not.toBeNull()
++  })
++})
 diff --git a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts b/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
 index b144ddbdeaeaeb4149a08af7b1d897bd413e4960..ae945e2ae0bc03c5db4963412381fabfb0384ef7 100644
 --- a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
