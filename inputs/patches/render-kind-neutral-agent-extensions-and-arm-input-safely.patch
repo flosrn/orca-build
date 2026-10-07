@@ -3,11 +3,16 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: render kind-neutral agent extensions and arm input safely
 
+The kind-neutral agent-status source replaces upstream's per-kind branches, and
+the titlebar test keeps its behavioural harness in place of the source-text
+assertions upstream still carries; its OpenCode hook mock gained the
+refreshLegacySharedPlugin call upstream makes at launch.
+
 Carried-Because: Shared Pi and OMP homes must not depend on pane launch order; host-owned timers contain teardown and input preflight status.
 Tests: src/main/pi/*test.ts; src/main/ipc/pty-spawn-env-agent-overlays.test.ts; src/main/ipc/pty-daemon-spawn-codex-auth.test.ts; src/main/ipc/pty-daemon-spawn-session-identity.test.ts
 
 diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
-index 4a3b807f1493df461d4989778c3c767dca9a5a05..063bf0ba85e5b9a67f7e71a77fdf91170f9b9624 100644
+index 249767d705adf6f4145e80812700fc47ed2c60ac..4b57fc29d1b04630dbfb8070dcc66f6d371cc97e 100644
 --- a/.github/CONTRIBUTING.md
 +++ b/.github/CONTRIBUTING.md
 @@ -32,6 +32,14 @@ and Mac `orca-local-build.json` record the full workbench HEAD; environment comm
@@ -26,10 +31,10 @@ index 4a3b807f1493df461d4989778c3c767dca9a5a05..063bf0ba85e5b9a67f7e71a77fdf9117
  
  Use a clear, descriptive branch name that reflects the change.
 diff --git a/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts b/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
-index cb60984c50cfe72e6053cf79b9e974397cead16f..7be488e441c16aa831e9b0ab8bfa6944521a89f6 100644
+index 0ecb8da064e7874c1b9a6f122b98fc84a4a4b85d..8f31d8354d8535a8dcd6dc3b98a2c969f59e6119 100644
 --- a/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
 +++ b/src/main/ipc/pty-daemon-spawn-codex-auth.test.ts
-@@ -1,14 +1,6 @@
+@@ -1,15 +1,6 @@
  import { describe, expect, it, vi } from 'vitest'
 -import {
 -  readFileSyncMock,
@@ -39,14 +44,15 @@ index cb60984c50cfe72e6053cf79b9e974397cead16f..7be488e441c16aa831e9b0ab8bfa6944
 -import {
 -  expectedOmpStatusExtension,
 -  TEST_CODEX_HOME,
--  TEST_CODEX_AUTH_JSON
+-  TEST_CODEX_AUTH_JSON,
+-  TEST_MANAGED_ROOT
 -} from './pty-ipc-test-constants'
 +import { readFileSyncMock, openCodeBuildPtyEnvMock } from './pty-ipc-mock-registry'
-+import { TEST_CODEX_HOME, TEST_CODEX_AUTH_JSON } from './pty-ipc-test-constants'
++import { TEST_CODEX_HOME, TEST_CODEX_AUTH_JSON, TEST_MANAGED_ROOT } from './pty-ipc-test-constants'
  import { setupPtyIpcSuite } from './pty-ipc-test-harness'
  import { createDaemonActiveProviderFixtures } from './pty-ipc-daemon-provider-fixtures'
  import { join } from 'node:path'
-@@ -458,39 +450,15 @@ describe('registerPtyHandlers', () => {
+@@ -467,39 +458,15 @@ describe('registerPtyHandlers', () => {
          expect(env.ORCA_OPENCODE_CONFIG_DIR).toBe('/tmp/orca-opencode-overlay')
          expect(env.ORCA_OPENCODE_SOURCE_CONFIG_DIR).toBe('/user/custom/opencode')
        })
@@ -87,7 +93,7 @@ index cb60984c50cfe72e6053cf79b9e974397cead16f..7be488e441c16aa831e9b0ab8bfa6944
          const env = await daemonSpawnAndGetEnv(
            { PI_CODING_AGENT_DIR: '/user/.omp/agent' },
            undefined,
-@@ -498,12 +466,6 @@ describe('registerPtyHandlers', () => {
+@@ -507,12 +474,6 @@ describe('registerPtyHandlers', () => {
            undefined,
            { command: 'omp' }
          )
@@ -100,7 +106,7 @@ index cb60984c50cfe72e6053cf79b9e974397cead16f..7be488e441c16aa831e9b0ab8bfa6944
          expect(env.PI_CODING_AGENT_DIR).toBe('/user/.omp/agent')
          expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
          expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
-@@ -525,12 +487,6 @@ describe('registerPtyHandlers', () => {
+@@ -534,12 +495,6 @@ describe('registerPtyHandlers', () => {
            { command: 'powershell wait-wrapper' }
          )
  
@@ -205,10 +211,10 @@ index 766decf1c9c0b7c7462e19f7a0501480947d5ad9..c22a300a5190199eac31da636962ebfc
            expect.objectContaining({
              targetId: 'ssh-1',
 diff --git a/src/main/ipc/pty-spawn-env-agent-overlays.test.ts b/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
-index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c03bf41cf3 100644
+index c194cf041791884ddd9ddcefd8d6afadb7a3027d..380e9523296fa595bd5b95707b37a59bf85f9821 100644
 --- a/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
 +++ b/src/main/ipc/pty-spawn-env-agent-overlays.test.ts
-@@ -241,44 +241,6 @@ describe('registerPtyHandlers', () => {
+@@ -253,44 +253,6 @@ describe('registerPtyHandlers', () => {
          expect(env.OPENCODE_CONFIG_DIR).not.toBe(env.ORCA_OPENCODE_SOURCE_CONFIG_DIR)
        }
      )
@@ -253,7 +259,7 @@ index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c0
      it('materializes Pi home for an explicit Pi launch through a custom command', async () => {
        const env = await spawnAndGetEnv(
          undefined,
-@@ -308,12 +270,6 @@ describe('registerPtyHandlers', () => {
+@@ -320,12 +282,6 @@ describe('registerPtyHandlers', () => {
          undefined,
          command
        )
@@ -266,7 +272,7 @@ index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c0
        expect(env.PI_CODING_AGENT_DIR).toBe('/tmp/user-omp-agent')
        expect(env.ORCA_OMP_CODING_AGENT_DIR).toBeUndefined()
        expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
-@@ -361,12 +317,6 @@ describe('registerPtyHandlers', () => {
+@@ -373,12 +329,6 @@ describe('registerPtyHandlers', () => {
          'powershell wait-wrapper'
        )
  
@@ -279,7 +285,7 @@ index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c0
        expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
          '/tmp/user-omp-agent/extensions/orca-agent-status.ts'
        )
-@@ -376,15 +326,7 @@ describe('registerPtyHandlers', () => {
+@@ -388,15 +338,7 @@ describe('registerPtyHandlers', () => {
        const env = await spawnAndGetEnv({
          PI_CODING_AGENT_DIR: '/tmp/parent-orca-pi-overlay',
          ORCA_PI_SOURCE_AGENT_DIR: '/tmp/user-pi-agent'
@@ -297,10 +303,10 @@ index 1595835801f387b30b1324825fe961b4e2ef24f3..c9cc8d4f9be478590eb9ee44c3a481c0
        expect(env.ORCA_PI_CODING_AGENT_DIR).toBeUndefined()
        expect(env.ORCA_PI_SOURCE_AGENT_DIR).toBe('/tmp/user-pi-agent')
 diff --git a/src/main/ipc/pty/host-env/assembly.ts b/src/main/ipc/pty/host-env/assembly.ts
-index b5daa5bed7f0dd7ed8e2c42a8fcd1904821e7e29..85b68c6dd3e9ba7434209803be54d8d39d6f7229 100644
+index 8b921b4ebdec30add6bfa110ca153340cc753d91..c0ed21369c27ad4bef7122251481c61c1d197cae 100644
 --- a/src/main/ipc/pty/host-env/assembly.ts
 +++ b/src/main/ipc/pty/host-env/assembly.ts
-@@ -167,12 +167,9 @@ export function buildPtyHostEnv(
+@@ -150,12 +150,9 @@ export function buildPtyHostEnv(
      clearPiAgentShadowEnv(baseEnv, 'pi')
      clearPiAgentShadowEnv(baseEnv, 'omp')
      clearPiAgentShadowEnv(baseEnv, 'prime-agent')
@@ -316,7 +322,7 @@ index b5daa5bed7f0dd7ed8e2c42a8fcd1904821e7e29..85b68c6dd3e9ba7434209803be54d8d3
        const piEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir, 'pi', {
          materializeDefaultHome: explicitPiAgentKind === 'pi'
        })
-@@ -183,6 +180,7 @@ export function buildPtyHostEnv(
+@@ -166,6 +163,7 @@ export function buildPtyHostEnv(
      if (shouldInstallOmpExtensions && shouldPrepareOmpShadow) {
        const ompEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingOmpAgentDir, 'omp', {
          materializeDefaultHome: explicitPiAgentKind === 'omp',
@@ -364,7 +370,7 @@ index 5ecee4fb0f25e81aba0c97809328341ed46c4dc5..5144e7d6028dcc29b4a5db5d1cd3cccf
    it('reports only agent_settled after multiple first-run agent_end events', async () => {
      vi.useFakeTimers()
 diff --git a/src/main/pi/agent-status-extension-source.ts b/src/main/pi/agent-status-extension-source.ts
-index bdf9061779c7fb618f26348ab38ea76bce682c65..a43a1b9d0f92be304f47e2994565711ffc6020f0 100644
+index 58a18b78fa5626f4f631c42051ddf79b363ecb82..fec1d879482a5793c22c96c73ef58c4cb63cba5a 100644
 --- a/src/main/pi/agent-status-extension-source.ts
 +++ b/src/main/pi/agent-status-extension-source.ts
 @@ -22,10 +22,11 @@ export const ORCA_PI_AGENT_STATUS_EXTENSION_FILE = 'orca-agent-status.ts'
@@ -394,7 +400,7 @@ index bdf9061779c7fb618f26348ab38ea76bce682c65..a43a1b9d0f92be304f47e2994565711f
 -          '  const sessionId = sessionManager?.getSessionId?.()',
 -          '  const sessionFile = sessionManager?.getSessionFile?.()',
 -          "  sessionMetadata = typeof sessionId === 'string' && sessionId && typeof sessionFile === 'string' && sessionFile ? { session_id: sessionId, session_file: sessionFile } : {}",
--          '  trackModelSession(sessionMetadata.session_id)', 
+-          '  trackModelSession(sessionMetadata.session_id)',
 -          '}',
 -          '',
 -          'function updateRuntimeOmpSessionMetadata(ctx: unknown): void {',
@@ -782,10 +788,10 @@ index 1d7c4abd304e9d924b140cc59cc7304f033160a3..38816f7f4239dbe4129df06663ae2db6
      '    clearAnimation()',
      '    stopMarkerReassert()',
 diff --git a/src/main/pi/titlebar-extension-service.test.ts b/src/main/pi/titlebar-extension-service.test.ts
-index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28e0636e38 100644
+index 608c331c017f4ab883583823f0bb3d28671301e1..66c2c54afdb0203ddd842c812e54ac38381189b8 100644
 --- a/src/main/pi/titlebar-extension-service.test.ts
 +++ b/src/main/pi/titlebar-extension-service.test.ts
-@@ -18,6 +18,16 @@ import type * as osModule from 'node:os'
+@@ -18,6 +18,22 @@ import type * as osModule from 'node:os'
  import type * as fsModule from 'node:fs'
  import { join } from 'node:path'
  import { installFakeAppEnvironment } from '../../../config/scripts/vitest-host-ports-setup'
@@ -795,14 +801,20 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
 +import { buildPtyHostEnv } from '../ipc/pty/host-env/assembly'
 +
 +vi.mock('../opencode/hook-service', () => ({
-+  openCodeHookService: { buildPtyEnv: () => ({}) },
-+  openCode2HookService: { buildPtyEnv: () => ({}) }
++  // Why a class: the startup-prompt installer constructs one at import time.
++  OpenCodeHookService: class {
++    buildPtyEnv(): Record<string, string> {
++      return {}
++    }
++  },
++  openCodeHookService: { buildPtyEnv: () => ({}), refreshLegacySharedPlugin: () => {} },
++  openCode2HookService: { buildPtyEnv: () => ({}), refreshLegacySharedPlugin: () => {} }
 +}))
 +vi.mock('../agent-hooks/server', () => ({ agentHookServer: { buildPtyEnv: () => ({}) } }))
  
  // The service calls app.getPath('userData') for its overlay root. Point that
  // at a real tmp dir so we can exercise the filesystem behavior end-to-end.
-@@ -39,7 +49,6 @@ vi.mock('os', async (importOriginal) => {
+@@ -39,7 +55,6 @@ vi.mock('os', async (importOriginal) => {
  })
  
  import { PiTitlebarExtensionService, isSafeDescendCandidate } from './titlebar-extension-service'
@@ -810,7 +822,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
  
  function legacyOverlayPath(kind: 'pi' | 'omp', ptyId: string): string {
    const rootDir = kind === 'pi' ? 'pi-agent-overlays' : 'omp-agent-overlays'
-@@ -191,6 +200,72 @@ describe('PiTitlebarExtensionService', () => {
+@@ -196,6 +211,72 @@ describe('PiTitlebarExtensionService', () => {
      })
    }
  
@@ -883,7 +895,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
    it('buildPtyEnv installs Orca extensions into the user agent dir without redirecting the home', () => {
      const svc = new PiTitlebarExtensionService()
      const env = svc.buildPtyEnv('pty-1', piHome, 'pi')
-@@ -204,26 +279,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -209,12 +290,6 @@ describe('PiTitlebarExtensionService', () => {
        'orca-titlebar-spinner.ts',
        'user-ext'
      ])
@@ -891,36 +903,21 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
 -      join(piHome, 'extensions', 'orca-agent-status.ts'),
 -      'utf-8'
 -    )
--    const titlebarExtensionSource = readFileSync(
--      join(piHome, 'extensions', 'orca-titlebar-spinner.ts'),
--      'utf-8'
--    )
--    const prefillExtensionSource = readFileSync(
--      join(piHome, 'extensions', 'orca-prefill.ts'),
--      'utf-8'
--    )
 -    expect(statusExtensionSource).toContain('@orca-managed-pi-extension')
 -    expect(statusExtensionSource).toContain('/hook/pi')
--    expect(statusExtensionSource).toContain('process.title')
--    expect(statusExtensionSource).toContain("return '/hook/omp'")
--    expect(titlebarExtensionSource).toContain('@orca-managed-pi-extension')
--    expect(titlebarExtensionSource).toContain('process.env.ORCA_PANE_KEY')
--    expect(prefillExtensionSource).toContain('@orca-managed-pi-extension')
--    expect(prefillExtensionSource).toContain('process.env.ORCA_PANE_KEY')
      expectPiHomeIntact()
    })
  
-@@ -245,9 +300,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -236,8 +311,6 @@ describe('PiTitlebarExtensionService', () => {
        'orca-agent-status.ts',
        'user-ext'
      ])
 -    const source = readFileSync(join(piHome, 'extensions', 'orca-agent-status.ts'), 'utf-8')
 -    expect(source).toContain('/hook/prime-agent')
--    expect(source).not.toContain("return '/hook/omp'")
      expect(existsSync(join(piHome, 'extensions', 'orca-titlebar-spinner.ts'))).toBe(false)
      expect(existsSync(join(piHome, 'extensions', 'orca-prefill.ts'))).toBe(false)
      expectPiHomeIntact()
-@@ -331,9 +383,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -317,9 +390,6 @@ describe('PiTitlebarExtensionService', () => {
      expect(
        readFileSync(join(piHome, 'extensions', 'legacy-package', 'orca-prefill.ts'), 'utf-8')
      ).toBe('user package file')
@@ -930,7 +927,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
      expect(readFileSync(join(overlayDir, '.orca-omp-overlay-migration-complete'), 'utf-8')).toBe(
        'complete\n'
      )
-@@ -531,15 +580,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -517,15 +587,6 @@ describe('PiTitlebarExtensionService', () => {
      expectPiHomeIntact()
    })
  
@@ -946,7 +943,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
  
    it('rebuilding updates Orca-owned extensions while preserving user files', () => {
      const svc = new PiTitlebarExtensionService()
-@@ -557,9 +597,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -543,9 +604,6 @@ describe('PiTitlebarExtensionService', () => {
      const secondEnv = svc.buildPtyEnv('pty-refresh-2', piHome, 'pi')
  
      expect(secondEnv.PI_CODING_AGENT_DIR).toBeUndefined()
@@ -956,7 +953,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
      expect(readFileSync(join(piHome, 'auth.json'), 'utf-8')).toBe('rotated token')
      expect(readFileSync(join(piHome, 'extensions', 'new-ext', 'ext.ts'), 'utf-8')).toBe(
        'new user extension'
-@@ -595,8 +632,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -581,8 +639,6 @@ describe('PiTitlebarExtensionService', () => {
      )
      expect(readFileSync(userStatusPath, 'utf-8')).toBe(userStatusExtension)
      expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(fallbackStatusPath)
@@ -965,7 +962,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
    })
  
    it.skipIf(process.platform === 'win32')(
-@@ -615,9 +650,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -601,9 +657,6 @@ describe('PiTitlebarExtensionService', () => {
          expect(existsSync(join(realExtensionsDir, 'orca-agent-status.ts'))).toBe(true)
          expect(existsSync(join(realExtensionsDir, 'orca-prefill.ts'))).toBe(true)
          expect(existsSync(join(realExtensionsDir, 'orca-titlebar-spinner.ts'))).toBe(true)
@@ -975,7 +972,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
        } finally {
          rmSync(realExtensionsDir, { recursive: true, force: true })
        }
-@@ -701,12 +733,6 @@ describe('PiTitlebarExtensionService', () => {
+@@ -687,12 +740,6 @@ describe('PiTitlebarExtensionService', () => {
          expect(env.ORCA_OMP_STATUS_EXTENSION).toBe(
            join(fakeHome, '.omp', 'agent', 'extensions', 'orca-agent-status.ts')
          )
@@ -989,7 +986,7 @@ index 1240d1859a8bd70717ca09bafe11296eb082c270..98948b561d1ec1d84e937638f5620f28
            existsSync(join(fakeHome, '.pi', 'agent', 'extensions', 'orca-agent-status.ts'))
          ).toBe(false)
 diff --git a/src/main/pi/titlebar-extension-service.ts b/src/main/pi/titlebar-extension-service.ts
-index 64a021603f7bba40af97ba19bd2a19176e1fdfa5..3e397eb706d14623e8ec075ead2903b5c3981a99 100644
+index 4b698c02f09a7763ecee819d59b78502ef99e55f..608a8a4d001780610a395ac6a2174982ff86ee91 100644
 --- a/src/main/pi/titlebar-extension-service.ts
 +++ b/src/main/pi/titlebar-extension-service.ts
 @@ -187,7 +187,7 @@ export class PiTitlebarExtensionService {
@@ -1001,7 +998,7 @@ index 64a021603f7bba40af97ba19bd2a19176e1fdfa5..3e397eb706d14623e8ec075ead2903b5
    ): Record<string, string> {
      const freshConfigEnv = kind === 'omp' ? this.buildFreshOmpEnv() : {}
      // The caller resolves the effective launch environment before this point.
-@@ -208,7 +208,7 @@ export class PiTitlebarExtensionService {
+@@ -207,7 +207,7 @@ export class PiTitlebarExtensionService {
      // homes on every open (#10196). Only materialize the default home when the
      // caller opts in (explicit agent launch) or the dir already exists.
      const materializeDefaultHome = options?.materializeDefaultHome !== false

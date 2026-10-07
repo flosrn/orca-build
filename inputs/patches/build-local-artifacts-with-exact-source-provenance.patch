@@ -3,11 +3,16 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: build local artifacts with exact source provenance
 
+Since v1.4.221 build:cli runs upstream's prepare:cli-output, which here stops at
+verify-cli-bin: a build never symlinks the dev CLI into /usr/local/bin. The
+Windows dev-channel publish assertions go with publish: null, as the
+uninstaller-hook test upstream retired does.
+
 Carried-Because: Local builds carry exact source provenance, sign only with the identity they are given, and never publish to upstream.
 Tests: config/scripts/build-provenance.test.mjs, config/scripts/electron-builder-mac-channel-config.test.mjs and affected packaging gates.
 
 diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
-index 456fa8f2831f87eee8e0bd8516353242076dc845..4a3b807f1493df461d4989778c3c767dca9a5a05 100644
+index 322481ae8b35d02fc26f16e6e0fae22a89e002e2..249767d705adf6f4145e80812700fc47ed2c60ac 100644
 --- a/.github/CONTRIBUTING.md
 +++ b/.github/CONTRIBUTING.md
 @@ -22,10 +22,16 @@ pnpm dev
@@ -30,10 +35,10 @@ index 456fa8f2831f87eee8e0bd8516353242076dc845..4a3b807f1493df461d4989778c3c767d
  
  Use a clear, descriptive branch name that reflects the change.
 diff --git a/AGENTS.md b/AGENTS.md
-index 8ac5cd365cc31c37833e43efa54d32c1b15b5d3a..f1fbe40c147415a009b7824447b02bae521028a5 100644
+index f991769cc1fa05c592752956b0aa3087b4679825..24c2f6903e43fed05beb2e7052a6b2f4e96721c6 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
-@@ -85,7 +85,7 @@ Orca targets macOS, Linux, and Windows. Keep all platform-dependent behavior beh
+@@ -86,7 +86,7 @@ Orca targets macOS, Linux, and Windows. Keep all platform-dependent behavior beh
  
  ## Native Dependency Installs
  
@@ -43,7 +48,7 @@ index 8ac5cd365cc31c37833e43efa54d32c1b15b5d3a..f1fbe40c147415a009b7824447b02bae
  ## SSH Use Case
  
 diff --git a/config/electron-builder.config.cjs b/config/electron-builder.config.cjs
-index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8a9b23620 100644
+index b0666c42a3d6380c948e5b244df9807dbb0e5550..87ec24f64a40a7abd610d06285829c0acecc5486 100644
 --- a/config/electron-builder.config.cjs
 +++ b/config/electron-builder.config.cjs
 @@ -13,7 +13,7 @@ const {
@@ -55,7 +60,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
  const {
    MOBILE_WEB_BUNDLE_DIR,
    assertMobileWebBundleBuilt
-@@ -51,6 +51,9 @@ const isMacRelease = process.env.ORCA_MAC_RELEASE === '1' || isMacHourly || isMa
+@@ -58,6 +58,9 @@ const isMacRelease = process.env.ORCA_MAC_RELEASE === '1' || isMacHourly || isMa
  const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
  const localBuildVersion =
    isMacRelease || isWinDevChannel ? undefined : process.env.ORCA_LOCAL_BUILD_VERSION
@@ -65,7 +70,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
  const isHourlyChannel = isMacHourly || isWinHourly
  const isDailyChannel = isMacDaily || isWinDaily
  const isAdhocChannel = isMacAdhoc || isWinAdhoc
-@@ -61,19 +64,6 @@ const devChannelBuildVersion = isHourlyChannel
+@@ -68,19 +71,6 @@ const devChannelBuildVersion = isHourlyChannel
      : isAdhocChannel
        ? process.env.ORCA_ADHOC_BUILD_VERSION
        : undefined
@@ -85,7 +90,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
  const appId = 'com.stablyai.orca'
  const featureWallResources = {
    from: 'resources/onboarding/feature-wall',
-@@ -330,24 +320,16 @@ module.exports = {
+@@ -353,24 +343,16 @@ module.exports = {
      if (context.electronPlatformName === 'linux') {
        writeFileSync(join(resourcesDir, 'package-type'), 'AppImage')
      }
@@ -118,15 +123,15 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
      }
      stampPackagedCliVersion(resourcesDir, context.packager.appInfo.version)
      prunePackagedRuntimeNodeModules(resourcesDir, context.electronPlatformName, context.arch)
-@@ -484,6 +466,7 @@ module.exports = {
+@@ -511,6 +493,7 @@ module.exports = {
      include: resolve(__dirname, 'nsis', 'orca-installer-hooks.nsh')
    },
    mac: {
 +    artifactName: 'orca-macos-${arch}.${ext}',
-     // Why rank Alternate: Orca joins Finder's "Open With" list for Markdown without claiming
+     // Why rank Alternate: Orca joins Finder's "Open With" list without claiming
      // LSHandlerRank ownership, so whichever editor the user already prefers stays the default.
      // Why one entry per extension: app-builder-lib globs `*.${ext}`, which an array would break.
-@@ -532,6 +515,7 @@ module.exports = {
+@@ -568,6 +551,7 @@ module.exports = {
      // under Documents/Desktop/Downloads fails with EPERM and no re-prompt. At 24
      // builds a day that revokes the user's grants faster than they can re-grant.
      notarize: isMacRelease,
@@ -134,7 +139,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
      extraResources: [
        ...commonExtraResources,
        ...createPackagedRuntimeNodeModuleResources('darwin'),
-@@ -563,23 +547,10 @@ module.exports = {
+@@ -599,23 +583,10 @@ module.exports = {
          to: 'MacOS/orca-keyboard-layout'
        }
      ],
@@ -161,7 +166,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
    linux: {
      // Why mimeTypes and not fileAssociations: shared-mime-info already maps *.md/*.markdown to
      // text/markdown, so reusing that type puts Orca in the Open With list without shipping a glob
-@@ -628,7 +599,7 @@ module.exports = {
+@@ -664,7 +635,7 @@ module.exports = {
    },
    deb: {
      packageName: 'orca-ide',
@@ -170,7 +175,7 @@ index c168a479844a5038419b4eea61c9381aa5e92d88..8f2ed104cbd404eace5b651f486d37e8
      // Why: xvfb lets the bundled `orca serve` CLI run browser panes on a headless
      // Linux host — Chromium needs a display server even for offscreen rendering,
      // and serve starts Xvfb itself when present (see ensure-virtual-display.ts).
-@@ -674,16 +645,7 @@ module.exports = {
+@@ -710,16 +681,7 @@ module.exports = {
    // on Intel Macs. The beforeBuild hook performs Orca's targeted rebuild and
    // returns false so electron-builder does not rebuild optional cpu-features.
    npmRebuild: true,
@@ -631,11 +636,27 @@ index 0000000000000000000000000000000000000000..c2c6bec733e5ead684568d21781f4eec
 +    })
 +  })
 +})
+diff --git a/config/scripts/e2e-cli-artifact-capability.test.mjs b/config/scripts/e2e-cli-artifact-capability.test.mjs
+index af39b8da7536de3e6c9cec563e7be6047100d574..3f17cdf9bbe202a1e12194c77094c0bfb58da99f 100644
+--- a/config/scripts/e2e-cli-artifact-capability.test.mjs
++++ b/config/scripts/e2e-cli-artifact-capability.test.mjs
+@@ -12,8 +12,10 @@ const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+ describe('shared E2E CLI capability', () => {
+   it('uses the same preparation for locally compiled and downloaded CLI output', () => {
+     expect(scripts['build:cli']).toContain('&& pnpm run prepare:cli-output')
++    // Why no install-dev-cli step: a build never symlinks into /usr/local/bin; the
++    // dev CLI is installed on demand, not as a side effect of packaging.
+     expect(scripts['prepare:cli-output']).toBe(
+-      'node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json && node config/scripts/install-dev-cli.mjs'
++      'node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json'
+     )
+   })
+ 
 diff --git a/config/scripts/electron-builder-config.test.mjs b/config/scripts/electron-builder-config.test.mjs
-index 430a5fae4c826ecf1e908586af4270f6645c87a4..941959bbb9161b584c7feeeab2f503294f0dc265 100644
+index 454693e46d75ebf6fa4b2bd8d91213473f9df905..535c2c67bf2de2ce32c14f9808658e8df46f62e7 100644
 --- a/config/scripts/electron-builder-config.test.mjs
 +++ b/config/scripts/electron-builder-config.test.mjs
-@@ -273,16 +273,6 @@ describe('electron-builder config', () => {
+@@ -375,16 +375,6 @@ describe('electron-builder config', () => {
      expect(electronBuilderConfig.linux.desktop.entry.StartupWMClass).toBe('orca')
    })
  
@@ -843,7 +864,7 @@ index 7f2067552d5b77b2a6556307ae407a885ea9d10e..df7be3013ba63d85f2b28632ee9acb9f
  
  // Why the guard: the test imports the pure collector without running the CLI.
 diff --git a/config/scripts/verify-dev-channel-packaging.test.mjs b/config/scripts/verify-dev-channel-packaging.test.mjs
-index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac954302c5926b8 100644
+index ceef8f7617418b485ee7ef3c79e7c0ad8e129653..c7b77639a3736897ff92e7075e2daa35d411c3b5 100644
 --- a/config/scripts/verify-dev-channel-packaging.test.mjs
 +++ b/config/scripts/verify-dev-channel-packaging.test.mjs
 @@ -39,8 +39,6 @@ describe('electron-builder dev-channel identity', () => {
@@ -855,8 +876,8 @@ index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac95430
    })
  
    // The whole point of the change: an unsigned build that advertised a
-@@ -66,16 +64,6 @@ describe('electron-builder dev-channel identity', () => {
-     expect(loadConfigWithEnv(WIN_ADHOC_ENV).win.signtoolOptions.publisherName).toBeUndefined()
+@@ -53,17 +51,6 @@ describe('electron-builder dev-channel identity', () => {
+     expect(config.win.verifyUpdateCodeSignature).toBe(false)
    })
  
 -  it.each([
@@ -869,10 +890,11 @@ index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac95430
 -    expect(config.publish.repo).toBe(repo)
 -    expect(config.publish.releaseType).toBe('prerelease')
 -  })
- 
+-
    // Why: ORCA_MAC_* gates hardened runtime, notarization, and root-level
    // forceCodeSigning. If the Windows variables leaked into that, the Windows job
-@@ -95,13 +83,12 @@ describe('electron-builder dev-channel identity', () => {
+   // would fail packaging for want of a cert it deliberately does not use.
+@@ -82,13 +69,12 @@ describe('electron-builder dev-channel identity', () => {
      })
  
      expect(config.mac.notarize).toBe(true)
@@ -887,7 +909,7 @@ index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac95430
      extraMetadata: { version: '1.4.178-adhoc.20260819010203' },
      win: { verifyUpdateCodeSignature: false }
    }
-@@ -118,9 +105,7 @@ describe('collectDevChannelPackagingProblems', () => {
+@@ -105,9 +91,7 @@ describe('collectDevChannelPackagingProblems', () => {
      ).toEqual([])
    })
  
@@ -898,7 +920,7 @@ index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac95430
      const problems = collectDevChannelPackagingProblems({
        channel: 'adhoc',
        platform: 'win32',
-@@ -128,8 +113,7 @@ describe('collectDevChannelPackagingProblems', () => {
+@@ -115,8 +99,7 @@ describe('collectDevChannelPackagingProblems', () => {
        env
      })
  
@@ -908,7 +930,7 @@ index dfde5d461d29910d2172dc9ddfde3b427fdde0eb..89f1d3099dd5b2839b6d56cf1ac95430
    })
  
    it('rejects a Windows dev build that still advertises a publisherName', () => {
-@@ -165,7 +149,7 @@ describe('collectDevChannelPackagingProblems', () => {
+@@ -152,7 +135,7 @@ describe('collectDevChannelPackagingProblems', () => {
          channel: 'adhoc',
          platform: 'darwin',
          config: {
@@ -1029,14 +1051,10 @@ index 9b593f5716ab099edcab62719f4e45911f85512d..910004ae6d4347de4751360b8ac8cb9d
    })
  
 diff --git a/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs b/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
-index fd9e1790d5606d87f73d4e69d0aeb6f58709ad98..ac8ed0c7ee0e567e11d38dc5c1fb7137e1c2d301 100644
+index a4a267b45cee036a541524952ca2a553209646bc..fd7711fa7a081bf4a832c75df701bf8e42d6c7e5 100644
 --- a/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
 +++ b/config/scripts/windows-cmd-shim-spawn-boundary.test.mjs
-@@ -29,14 +29,9 @@ const WINDOWS_SHIM_SPAWN_ALLOWLIST = [
-   'config/scripts/dev-cli-terminal-wrapper.mjs',
-   'config/scripts/dev-cli-terminal-wrapper.test.mjs',
-   'config/scripts/electron-builder-config.test.mjs',
--  'config/scripts/ensure-native-runtime.test.mjs',
+@@ -32,10 +32,6 @@ const WINDOWS_SHIM_SPAWN_ALLOWLIST = [
    'config/scripts/live-remote-freeze-rpc.mjs',
    'config/scripts/pty-transcript-secret-scan.test.mjs',
    'config/scripts/remote-agent-session-authority-repro.mjs',
@@ -1045,10 +1063,10 @@ index fd9e1790d5606d87f73d4e69d0aeb6f58709ad98..ac8ed0c7ee0e567e11d38dc5c1fb7137
 -  'config/scripts/build-linux-local.mjs',
 -  'config/scripts/build-linux-local.test.mjs',
    // Benchmarks, repros and e2e drivers — developer-invoked or Linux-only in CI.
-   'config/scripts/build-orcad-prebuilds.mjs',
    'config/scripts/run-ai-vault-typing-bench.mjs',
+   'config/scripts/run-ephemeral-vm-runtime-store-rollback-repro.mjs',
 diff --git a/docs/reference/linux-glibc-compatibility.md b/docs/reference/linux-glibc-compatibility.md
-index 64e72a67b839f5d64e252b29c60c30cd47e0a6b6..89d6b981119056a25200674ec0a5c47fdbf59d5f 100644
+index f1dcdda47109b9e161da1da776e467264fcb5a10..a7ad8bf5de2bcdc3cd28cdd814d3fa730cc73573 100644
 --- a/docs/reference/linux-glibc-compatibility.md
 +++ b/docs/reference/linux-glibc-compatibility.md
 @@ -14,6 +14,11 @@ Fedora/RHEL, or `rpm` through Homebrew on macOS, then verify it with
@@ -1081,15 +1099,15 @@ index 6e53ecac77a9095386718f04283fd249da986175..e57d2c62f5b92db3ff3e3d46a725d8ce
  ```sh
  pnpm install:release
 diff --git a/package.json b/package.json
-index 53b2a86d1f0bc800f40db9d5478f90b80d04171a..a0f523fe735947f8f8dd340a8d15d5782b386f10 100644
+index 430dfe2f18a8ded4b884bf5fb83ae3390d4d3847..fdfa5ea93204075cb8e5fe8324c22df8f1fddcc6 100644
 --- a/package.json
 +++ b/package.json
-@@ -88,7 +88,7 @@
-     "verify:localization-extraction": "node config/scripts/verify-localization-extraction.mjs",
+@@ -93,7 +93,7 @@
      "verify:localization-coverage": "node config/scripts/audit-localization-coverage.mjs --check",
      "audit:localization": "node config/scripts/audit-localization-coverage.mjs",
--    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json && node config/scripts/install-dev-cli.mjs",
-+    "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json",
+     "build:cli": "tsc -p config/tsconfig.cli.json --outDir out --composite false --incremental false && pnpm run prepare:cli-output",
+-    "prepare:cli-output": "node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json && node config/scripts/install-dev-cli.mjs",
++    "prepare:cli-output": "node config/scripts/verify-cli-bin.mjs --fix-executable --fix-package-json",
      "test:linux-cli-contract": "node config/scripts/run-linux-cli-launch-contract-docker.mjs --appimage dist/orca-linux.AppImage",
      "test:repro:skills-cli-runtime": "pnpm run build:cli && pnpm run build:electron-vite && pnpm run verify:built-skills-cli",
      "build:electron-vite": "node config/scripts/run-electron-vite-build.mjs",

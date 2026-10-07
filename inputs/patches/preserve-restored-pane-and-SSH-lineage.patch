@@ -3,7 +3,7 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: preserve restored pane and SSH lineage
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
 diff --git a/src/main/persistence-worktree-lineage-and-backups.test.ts b/src/main/persistence-worktree-lineage-and-backups.test.ts
@@ -363,28 +363,3 @@ index 22ef4ed5c4b21a86209c1ea12ab15334c9928c82..a4d29b1a12260dfb05ace57e1188feff
   */
  export function useWorktreeRuntimeTarget(
    worktreeId: string | null | undefined
-diff --git a/src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts b/src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts
-index bd00eaa5015822c0d8e3605ab7a527daabdfbd33..8ceb45488e8d0e81ee9020c3efd1591b5c513d0c 100644
---- a/src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts
-+++ b/src/renderer/src/store/slices/agent-status-main-agent-fact.test.ts
-@@ -51,14 +51,12 @@ describe('the main agent fact on a renderer status entry', () => {
-     })
-     expect(store.getState().agentStatusByPaneKey[PANE].mainAgent).toEqual(mainAgent)
- 
--    store
--      .getState()
--      .setAgentStatus(PANE, {
--        state: 'done',
--        prompt: 'go',
--        agentType: 'claude',
--        observation: osc(2)
--      })
-+    store.getState().setAgentStatus(PANE, {
-+      state: 'done',
-+      prompt: 'go',
-+      agentType: 'claude',
-+      observation: osc(2)
-+    })
-     expect(store.getState().agentStatusByPaneKey[PANE].mainAgent).toBeUndefined()
-   })
- 

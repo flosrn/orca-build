@@ -3,7 +3,26 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: show per account status bar meters
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+The bar's density comes from upstream's measured levels (status-bar-density.ts):
+compact, tightest-only, then a "+N" overflow chip. The per-account lanes render as
+upstream's usage chips keyed by lane, so collapsing and the overflow name a lane,
+never a provider. Upstream's Cursor headline and its ZCode provider are kept; the
+weekly-first summary stays for every other provider, and ZCode's compact row names
+its tighter pool as upstream's test fixes. cursorUsageMenu and the uninstaller test
+upstream retired are upstream's now. On v1.4.222 a segment also shows a provider's
+overage balance once a window is capped (upstream #25408); the account mark, that
+balance and the retained-sample warning render side by side.
+
+A failing lane stays marked at every density, also while its retry is in flight. Compact
+drops its status label, so its warning mark names the reason on hover; a lane showing a
+retained sample names it the same way; a "+N" chip that hides a failing lane takes the
+warning tone and names the reason; the narrowest letter badge names it on its amber dot.
+The lane marks live in usage-lane-marks.tsx, which keeps the segment file under
+upstream's max-lines budget. The French e2e roster keeps the default right-side segments,
+which main's UI sync restores anyway, so the bar it measures no longer changes mid-
+assertion: at 1568px it is compact, and at 2560px the label is bounded.
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
 diff --git a/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs b/config/scripts/locale-translation-policy.zh-status-bar-usage.test.mjs
@@ -32,6 +51,56 @@ index 0887cf2e434d9840782ac02cb9725c6c6e0efc08..37d80feeb00aa490038322f069128101
      'Force Delete Branch': '强制删除分支',
      'Time agents worked': '代理工作时间',
      PR: 'PR',
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index fbf12ea1ae17d5a1cc3b7e0aaa704e87d62d2c4c..387dc4c1f67a6fd864573d2bf702473302b99511 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -6,6 +6,9 @@ importers:
+   .:
+     configDependencies: {}
+     packageManagerDependencies:
++      '@pnpm/exe':
++        specifier: 12.8.1
++        version: 12.8.1
+       pnpm:
+         specifier: 12.8.1
+         version: 12.8.1
+@@ -89,6 +92,11 @@ packages:
+     cpu: [x64]
+     os: [win32]
+ 
++  '@pnpm/exe@12.8.1':
++    resolution: {integrity: sha512-ju5MeefhEEXI7NO3u6oj54uGBOkN0pVhI+tcmuZDkTTqVdRZvEVEo+zhjwAoe8vEXguQCvsa6cTDhmFPxpOXeQ==}
++    engines: {node: '>=18.*'}
++    hasBin: true
++
+   pnpm@12.8.1:
+     resolution: {integrity: sha512-9kupB1B/XOr+BsjTjmBS0BeURFgOwSed3Vv8EctIqoomRLZlmOB+dh2oSHKp/FfV+QK4f6SdAkGY1VhhKqu+RQ==}
+     engines: {node: '>=18.*'}
+@@ -138,6 +146,23 @@ snapshots:
+   '@pnpm/exe.win32-x64@12.8.1':
+     optional: true
+ 
++  '@pnpm/exe@12.8.1':
++    optionalDependencies:
++      '@pnpm/exe.android-arm64': 12.8.1
++      '@pnpm/exe.android-x64': 12.8.1
++      '@pnpm/exe.darwin-arm64': 12.8.1
++      '@pnpm/exe.darwin-x64': 12.8.1
++      '@pnpm/exe.freebsd-x64': 12.8.1
++      '@pnpm/exe.linux-arm64': 12.8.1
++      '@pnpm/exe.linux-arm64-musl': 12.8.1
++      '@pnpm/exe.linux-ppc64': 12.8.1
++      '@pnpm/exe.linux-riscv64': 12.8.1
++      '@pnpm/exe.linux-s390x': 12.8.1
++      '@pnpm/exe.linux-x64': 12.8.1
++      '@pnpm/exe.linux-x64-musl': 12.8.1
++      '@pnpm/exe.win32-arm64': 12.8.1
++      '@pnpm/exe.win32-x64': 12.8.1
++
+   pnpm@12.8.1:
+     optionalDependencies:
+       '@pnpm/exe.android-arm64': 12.8.1
 diff --git a/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx b/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx
 index 03c7912a77228411693addaf8e0a90723e3092a9..9d683761db9e45f48735b9c4b5c2c685c909d7c4 100644
 --- a/src/renderer/src/components/settings/AppearanceWindowSidebarSection.tsx
@@ -110,10 +179,10 @@ index 0000000000000000000000000000000000000000..df15a23c6c3201c085737b5a04f4206f
 +  ]
 +}
 diff --git a/src/renderer/src/components/settings/appearance-status-bar-search.ts b/src/renderer/src/components/settings/appearance-status-bar-search.ts
-index 8a4d65f21fd15443c84615f70602f96548c705ff..7d18874e263388f2c8f21b111a5d589bfedb834d 100644
+index 16749f4ab311d661db6cb26953380a2ccb7eac00..71edfe52821c6901ed655487a3f4a84b7e5e7069 100644
 --- a/src/renderer/src/components/settings/appearance-status-bar-search.ts
 +++ b/src/renderer/src/components/settings/appearance-status-bar-search.ts
-@@ -1,20 +1,17 @@
+@@ -1,21 +1,18 @@
 -import type { StatusBarItem } from '../../../../shared/ui-chrome-types'
  import { createLocalizedCatalog } from '@/i18n/localized-catalog'
  import { translate } from '@/i18n/i18n'
@@ -126,6 +195,7 @@ index 8a4d65f21fd15443c84615f70602f96548c705ff..7d18874e263388f2c8f21b111a5d589b
  import { getMiniMaxStatusBarToggleSearchEntry } from './appearance-status-bar-minimax-toggle-search'
  import { getGrokStatusBarToggleSearchEntry } from './appearance-status-bar-grok-toggle-search'
  import { getCursorStatusBarToggleSearchEntry } from './appearance-status-bar-cursor-toggle-search'
+ import { getZcodeStatusBarToggleSearchEntry } from './appearance-status-bar-zcode-toggle-search'
  
  export const getStatusBarToggles = createLocalizedCatalog(
 -  (): readonly {
@@ -139,34 +209,51 @@ index 8a4d65f21fd15443c84615f70602f96548c705ff..7d18874e263388f2c8f21b111a5d589b
      {
        id: 'claude',
        title: translate('auto.components.settings.appearance.search.9dc15020d7', 'Claude Usage'),
-@@ -169,6 +166,7 @@ export const getStatusBarToggles = createLocalizedCatalog(
-     getMiniMaxStatusBarToggleSearchEntry(),
+@@ -171,6 +168,7 @@ export const getStatusBarToggles = createLocalizedCatalog(
      getGrokStatusBarToggleSearchEntry(),
      getCursorStatusBarToggleSearchEntry(),
+     getZcodeStatusBarToggleSearchEntry(),
 +    ...getCodexBarStatusBarToggleSearchEntries(),
      {
        id: 'ssh',
        title: translate('auto.components.settings.appearance.search.57fb424c56', 'Remote Hosts'),
 diff --git a/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx b/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
-index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d2825355255d19c844 100644
+index f9a484ede41ae8e3bd0051259f0789af2a46f7ce..f0b70b86a7ba389b9591df2e52da4df3a1c495e6 100644
 --- a/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
 +++ b/src/renderer/src/components/status-bar/StatusBarProviderSegment.tsx
-@@ -7,10 +7,13 @@ import {
- } from '../../../../shared/usage-percentage-display'
- import type { StatusBarUsageMode } from '../../../../shared/status-bar-usage-mode'
- import { ProviderIcon, clampUsedPercent, getProviderUsageStatusLabel } from './tooltip'
--import { getTightestUsageSection } from './UsageRosterPanel'
-+import { getStatusBarUsageSection } from './UsageRosterPanel'
+@@ -1,4 +1,3 @@
+-import { AlertTriangle } from 'lucide-react'
+ import React from 'react'
+ import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
+ import {
+@@ -9,17 +8,24 @@ import type { StatusBarUsageMode } from '../../../../shared/status-bar-usage-mod
+ import { formatCurrencyAmount } from '../../../../shared/currency-format'
+ import { formatCreditCount } from '../../../../shared/credit-count-format'
+ import {
+-  ProviderIcon,
+   USAGE_URGENT_PERCENT,
+   USAGE_WARNING_PERCENT,
+   clampUsedPercent,
+   getProviderDisplayName,
+   getProviderUsageStatusLabel
+ } from './tooltip'
+-import { getTightestUsageSection, getUsageHeadlineSection } from './UsageRosterPanel'
++import {
++  getStatusBarUsageSection,
++  getTightestUsageSection,
++  getUsageHeadlineSection
++} from './UsageRosterPanel'
 +import { isProviderRefreshFailing, isUsageWindowExpired } from './usage-stale-sample'
 +import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
  import { formatRateLimitWindowChipLabel } from '@/lib/window-label-formatter'
  import { formatUsagePercentageLabel } from './usage-percentage-label'
  import { translate } from '@/i18n/i18n'
-+import type { UsageAccountBadge } from './usage-account-segments'
++import type { UsageAccountBadge, UsageBarSegment } from './usage-account-segments'
++import { ProviderAccountMark, RefreshFailingMark } from './usage-lane-marks'
  import { isCursorUsageBucket } from '../../../../shared/cursor-usage-buckets'
  
  function MiniBar({
-@@ -37,16 +40,18 @@ function WindowLabel({
+@@ -46,16 +52,18 @@ function WindowLabel({
    w,
    label,
    display,
@@ -188,28 +275,68 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
        {showLabel ? ` ${label}` : ''}
      </span>
    )
-@@ -57,11 +62,16 @@ function WindowLabel({
+@@ -66,10 +74,20 @@ function WindowLabel({
  // and markup can't drift between the two.
  export function ProviderLetterBadge({ p }: { p: ProviderRateLimits }): React.JSX.Element {
    const hasData = Boolean(p.session || p.weekly || p.fableWeekly || p.monthly || p.buckets?.length)
 +  // The dot is the whole message at this width, so a lane whose refresh is failing must not
-+  // wear the same solid dot as one that just refreshed.
-+  const dotClass = isProviderRefreshFailing(p)
++  // wear the same solid dot as one that just refreshed, and names why on hover.
++  const reason = isProviderRefreshFailing(p) ? getProviderUsageStatusLabel(p) : undefined
++  const dotClass = reason
 +    ? 'bg-amber-500/70'
 +    : hasData
 +      ? 'bg-muted-foreground/60'
 +      : 'bg-muted-foreground/30'
    return (
-     <span className="inline-flex items-center gap-1 text-muted-foreground">
--      <span
+-    <span className="inline-flex items-center gap-1 text-muted-foreground">
++    <span className="inline-flex items-center gap-1 text-muted-foreground" title={reason}>
+       <span
 -        className={`inline-block h-2 w-2 rounded-full ${hasData ? 'bg-muted-foreground/60' : 'bg-muted-foreground/30'}`}
--      />
-+      <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
++        className={`inline-block h-2 w-2 rounded-full ${dotClass}`}
++        role={reason ? 'img' : undefined}
++        aria-label={reason}
+       />
        {getProviderLetter(p.provider)}
      </span>
-   )
-@@ -87,6 +97,8 @@ function getProviderLetter(provider: ProviderRateLimits['provider']): string {
-       return 'U'
+@@ -97,22 +115,30 @@ export function UsageOverflowChip({
+   hidden,
+   display
+ }: {
+-  hidden: readonly ProviderRateLimits[]
++  /** Collapsed account lanes; a lane without a badge is a provider's single meter. */
++  hidden: readonly Pick<UsageBarSegment, 'limits' | 'badge'>[]
+   display: UsagePercentageDisplay
+ }): React.JSX.Element {
+-  const tones = hidden.map(getUsageTone)
++  const tones = hidden.map((segment) => getUsageTone(segment.limits))
++  // Why: a failing lane hidden here loses its own warning mark, so the chip carries it and the reason.
++  const failing = hidden.some((segment) => isProviderRefreshFailing(segment.limits))
+   const tone = tones.includes('urgent')
+     ? 'urgent'
+-    : tones.includes('warning')
++    : tones.includes('warning') || failing
+       ? 'warning'
+       : 'normal'
+   const names = hidden
+-    .map((p) => {
++    .map(({ limits: p, badge }) => {
+       const tightest = getTightestUsageSection(p)
+-      const name = getProviderDisplayName(p.provider)
+-      return tightest
++      const provider = getProviderDisplayName(p.provider)
++      // Why: two lanes of one provider must not read as one entry twice.
++      const name = badge ? `${provider} ${badge.email ?? badge.ordinal}` : provider
++      const reading = tightest
+         ? `${name} ${formatUsagePercentageLabel(tightest.window.usedPercent, display)}`
+         : name
++      return isProviderRefreshFailing(p)
++        ? `${reading} · ${getProviderUsageStatusLabel(p)}`
++        : reading
+     })
+     .join(', ')
+   return (
+@@ -157,6 +183,8 @@ function getProviderLetter(provider: ProviderRateLimits['provider']): string {
+       return 'Z'
      case 'codex':
        return 'X'
 +    case 'qwencloud':
@@ -217,7 +344,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
    }
  }
  
-@@ -105,10 +117,12 @@ function isVisibleStatusBarBucket(name: string): boolean {
+@@ -182,10 +210,12 @@ function isVisibleStatusBarBucket(name: string, provider: ProviderRateLimits['pr
  
  function VerboseProviderUsage({
    p,
@@ -230,8 +357,8 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
 +  now: number
  }): React.JSX.Element {
    if (p.buckets && p.buckets.length > 0) {
-     const visibleBuckets = p.buckets.filter((bucket) => isVisibleStatusBarBucket(bucket.name))
-@@ -120,8 +134,11 @@ function VerboseProviderUsage({
+     const visibleBuckets = p.buckets.filter((bucket) =>
+@@ -202,8 +232,11 @@ function VerboseProviderUsage({
          {visibleBuckets.map((bucket, index) => (
            <React.Fragment key={bucket.name}>
              {index > 0 ? <span className="text-muted-foreground">·</span> : null}
@@ -245,7 +372,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
              </span>
            </React.Fragment>
          ))}
-@@ -130,6 +147,7 @@ function VerboseProviderUsage({
+@@ -212,6 +245,7 @@ function VerboseProviderUsage({
              w={fallbackWindow}
              label={formatRateLimitWindowChipLabel(fallbackWindow)}
              display={display}
@@ -253,7 +380,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
            />
          ) : null}
        </>
-@@ -175,44 +193,92 @@ function VerboseProviderUsage({
+@@ -257,7 +291,12 @@ function VerboseProviderUsage({
        {visibleWindows.map((window, index) => (
          <React.Fragment key={window.key}>
            {index > 0 ? <span className="text-muted-foreground">·</span> : null}
@@ -267,40 +394,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
          </React.Fragment>
        ))}
      </>
-   )
- }
- 
-+function ProviderAccountMark({
-+  provider,
-+  badge
-+}: {
-+  provider: ProviderRateLimits['provider']
-+  badge: UsageAccountBadge | null
-+}): React.JSX.Element {
-+  if (!badge) {
-+    return <ProviderIcon provider={provider} />
-+  }
-+  return (
-+    <span
-+      className="inline-flex items-center gap-1"
-+      title={badge.email ?? undefined}
-+      aria-label={badge.email ?? `${provider} ${badge.ordinal}`}
-+    >
-+      <ProviderIcon provider={provider} />
-+      <span
-+        className={
-+          badge.isActive
-+            ? 'text-[10px] font-semibold leading-none tabular-nums text-foreground/90'
-+            : 'text-[10px] font-medium leading-none tabular-nums text-muted-foreground/60'
-+        }
-+      >
-+        {badge.ordinal}
-+      </span>
-+    </span>
-+  )
-+}
-+
- export function ProviderSegment({
+@@ -305,33 +344,48 @@ export function ProviderSegment({
    p,
    compact,
    display,
@@ -340,12 +434,15 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
      )
    }
  
--  const tightest = getTightestUsageSection(p)
-+  const summary = getStatusBarUsageSection(p)
+-  const tightest = mode === 'compact' ? getUsageHeadlineSection(p) : getTightestUsageSection(p)
++  // Why: the compact pill takes the provider's headline (Cursor's primary pool); the verbose
++  // mini bar tracks the weekly-first summary, the window that decides whether work continues.
++  const summary = mode === 'compact' ? getUsageHeadlineSection(p) : getStatusBarUsageSection(p)
  
-   // Fetching with no prior data
+-  // Fetching with no prior data
 -  if (p.status === 'fetching' && !tightest) {
-+  if (p.status === 'fetching' && !summary) {
++  // Fetching with no prior data; a failing refresh's retry keeps its failure below
++  if (p.status === 'fetching' && !summary && !isProviderRefreshFailing(p)) {
      return (
 -      <span className="inline-flex items-center gap-1 text-muted-foreground">
 -        <ProviderIcon provider={provider} />
@@ -354,7 +451,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
          <span className="animate-pulse">···</span>
        </span>
      )
-@@ -221,45 +287,58 @@ export function ProviderSegment({
+@@ -340,43 +394,57 @@ export function ProviderSegment({
    // Unavailable (CLI not installed)
    if (p.status === 'unavailable') {
      return (
@@ -366,9 +463,10 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
      )
    }
  
-   // Error with no data
+-  // Error with no data
 -  if (p.status === 'error' && !tightest) {
-+  if (p.status === 'error' && !summary) {
++  // Error with no data, including its retry in flight
++  if (isProviderRefreshFailing(p) && !summary) {
      return (
 -      <span className="inline-flex items-center gap-1 text-muted-foreground">
 -        <ProviderIcon provider={provider} />
@@ -376,7 +474,8 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
 -        {!compact && <span className="text-[11px] font-medium">{statusLabel}</span>}
 +      <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground">
 +        {mark}
-+        <AlertTriangle size={11} className="shrink-0 text-muted-foreground/80" />
++        {/* Why: compact drops the label below, so the mark keeps the reason on hover. */}
++        <RefreshFailingMark reason={compact ? statusLabel : null} />
 +        {!compact && (
 +          // Why: this copy is a localized sentence ("En attente du renouvellement des
 +          // identifiants"), while the bar is a single 24px row shared by every lane. Bound it
@@ -397,6 +496,7 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
 -  const isStale = p.status === 'error'
 +  // Has data (ok, fetching with retained data, or error with retained data)
 +  const isStale = isProviderRefreshFailing(p)
+   const showBalance = isExtraUsageActive(p)
 +  const summaryExpired = Boolean(summary && isUsageWindowExpired(summary.window, now))
  
    return (
@@ -426,13 +526,18 @@ index 3a9bc0cba48559eb9ac1d2720420107e8609a7c3..e8aa4f577c45f5643bb396d282535525
 +          expired={summaryExpired}
          />
        ) : null}
+       {showBalance && p.extraUsage ? (
+@@ -385,7 +453,7 @@ export function ProviderSegment({
+           <span className="tabular-nums">{formatCompactExtraUsage(p.extraUsage)}</span>
+         </>
+       ) : null}
 -      {isStale && <AlertTriangle size={11} className="text-muted-foreground/80" />}
-+      {isStale && <AlertTriangle size={11} className="shrink-0 text-muted-foreground/80" />}
++      {isStale && <RefreshFailingMark reason={statusLabel} />}
      </span>
    )
  }
 diff --git a/src/renderer/src/components/status-bar/StatusBarSurface.tsx b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
-index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..28a42b687a4c311aed5cf945a8f57a08bd7c440a 100644
+index 844eeabe5045c2cce8dcbe5c0995dbbbeadaa882..e9748d0dd901d42e4b819ebf4b6af3b3dab9244f 100644
 --- a/src/renderer/src/components/status-bar/StatusBarSurface.tsx
 +++ b/src/renderer/src/components/status-bar/StatusBarSurface.tsx
 @@ -1,5 +1,6 @@
@@ -442,7 +547,7 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..28a42b687a4c311aed5cf945a8f57a08
  import { lazyWithRetry } from '@/lib/lazy-with-retry'
  import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
  import {
-@@ -54,6 +55,8 @@ export type StatusBarProps = {
+@@ -53,6 +54,8 @@ export type StatusBarProps = {
  export function StatusBarSurface({
    floatingTerminalOpen
  }: StatusBarProps): React.JSX.Element | null {
@@ -451,86 +556,84 @@ index dfdcbb926db75f338e15f99f1bcc3fe5d773136a..28a42b687a4c311aed5cf945a8f57a08
    const controller = useStatusBarController(floatingTerminalOpen)
    if (!controller) {
      return null
-@@ -75,7 +78,7 @@ export function StatusBarSurface({
-     isEmptyUsageState,
+@@ -76,9 +79,9 @@ export function StatusBarSurface({
      isRefreshing,
+     overflowing,
      petEnabled,
 -    rosterProviders,
+     segmentsIconOnly,
+     segmentsRef,
 +    usageBarSegments,
      setMenuOpen,
      setMenuPoint,
      setStatusBarUsageMode,
-@@ -107,7 +110,7 @@ export function StatusBarSurface({
-         setMenuOpen(true)
-       }}
-     >
--      <div className="flex items-center gap-3">
-+      <div className="flex min-w-0 items-center gap-3">
-         {isEmptyUsageState ? (
-           showEmptyUsageCta ? (
-             <StatusBarUsageEmptyCta />
-@@ -123,22 +126,27 @@ export function StatusBarSurface({
-               <DropdownMenuTrigger asChild>
-                 <button
-                   type="button"
--                  className="inline-flex items-center gap-3 rounded px-1 py-0.5 hover:bg-accent/70"
-+                  className="inline-flex min-w-0 flex-nowrap items-center gap-3 whitespace-nowrap rounded px-1 py-0.5 hover:bg-accent/70"
-                   aria-label={translate(
-                     'auto.components.status.bar.UsageRosterPanel.title',
-                     'Usage'
-                   )}
-                 >
--                  {rosterProviders.map((p) =>
-+                  {usageBarSegments.map((segment) =>
-                     iconOnly ? (
--                      // Narrow status bar: fall back to main's compact letter badge.
--                      <span key={p.provider} title={getProviderDisplayName(p.provider)}>
--                        <ProviderLetterBadge p={p} />
-+                      <span
-+                        key={segment.key}
-+                        title={
-+                          segment.badge?.email ?? getProviderDisplayName(segment.limits.provider)
-+                        }
-+                      >
-+                        <ProviderLetterBadge p={segment.limits} />
-                       </span>
-                     ) : (
-                       <ProviderSegment
+@@ -140,18 +143,20 @@ export function StatusBarSurface({
+                       'Usage'
+                     )}
+                   >
+-                    {rosterProviders.map((p) => (
++                    {usageBarSegments.map((segment) => (
+                       // Why: collapsed chips leave the row but stay measurable, so the density hook can bring them back.
++                      // One chip per account lane: the key, not the provider, names it to the density hook.
+                       <span
 -                        key={p.provider}
--                        p={p}
+-                        data-usage-chip={p.provider}
+-                        data-usage-urgent={getUsageTone(p) === 'urgent'}
+-                        data-usage-collapsed={collapsedUsageProviders.includes(p.provider)}
+-                        aria-hidden={collapsedUsageProviders.includes(p.provider)}
 +                        key={segment.key}
-+                        p={segment.limits}
-+                        badge={segment.badge}
-                         compact={compact}
++                        data-usage-chip={segment.key}
++                        data-usage-urgent={getUsageTone(segment.limits) === 'urgent'}
++                        data-usage-collapsed={collapsedUsageProviders.includes(segment.key)}
++                        aria-hidden={collapsedUsageProviders.includes(segment.key)}
+                         className="inline-flex data-[usage-collapsed=true]:invisible data-[usage-collapsed=true]:absolute"
+                       >
+                         <ProviderSegment
+-                          p={p}
++                          p={segment.limits}
++                          badge={segment.badge}
+                           compact={compact}
+                           display={usagePercentageDisplay}
+                           mode={usageTightestOnly ? 'compact' : statusBarUsageMode}
+@@ -160,8 +165,8 @@ export function StatusBarSurface({
+                     ))}
+                     {collapseUsage ? (
+                       <UsageOverflowChip
+-                        hidden={rosterProviders.filter((p) =>
+-                          collapsedUsageProviders.includes(p.provider)
++                        hidden={usageBarSegments.filter((segment) =>
++                          collapsedUsageProviders.includes(segment.key)
+                         )}
                          display={usagePercentageDisplay}
-                         mode={statusBarUsageMode}
-@@ -160,7 +168,7 @@ export function StatusBarSurface({
-                 onCloseAutoFocus={usageMenuFocusHandoff.onCloseAutoFocus}
-               >
-                 <UsageRosterPanel
--                  providers={rosterProviders}
-+                  segments={usageBarSegments}
-                   display={usagePercentageDisplay}
-                   statusBarUsageMode={statusBarUsageMode}
-                   onStatusBarUsageModeChange={setStatusBarUsageMode}
-@@ -171,10 +179,8 @@ export function StatusBarSurface({
-                   canSignIn={(provider) => getUsageProviderAccountsSectionId(provider) !== null}
-                   onManageAccounts={handleManageAccounts}
-                   onUsageDetails={handleUsageDetails}
--                  renderRow={(p, rowNode) => {
--                    // Every provider drills into its detail panel (parity with the
--                    // per-provider dropdowns on main); Claude/Codex additionally get
--                    // the account switcher + runtime toggle + Codex reset credits.
-+                  renderRow={(segment, rowNode) => {
-+                    const p = segment.limits
-                     if (p.provider === 'claude') {
-                       return (
-                         <ClaudeSwitcherMenu
+                       />
+@@ -181,7 +186,7 @@ export function StatusBarSurface({
+                   onCloseAutoFocus={usageMenuFocusHandoff.onCloseAutoFocus}
+                 >
+                   <UsageRosterPanel
+-                    providers={rosterProviders}
++                    segments={usageBarSegments}
+                     display={usagePercentageDisplay}
+                     statusBarUsageMode={statusBarUsageMode}
+                     onStatusBarUsageModeChange={setStatusBarUsageMode}
+@@ -192,10 +197,11 @@ export function StatusBarSurface({
+                     canSignIn={(provider) => getUsageProviderAccountsSectionId(provider) !== null}
+                     onManageAccounts={handleManageAccounts}
+                     onUsageDetails={handleUsageDetails}
+-                    renderRow={(p, rowNode) => {
+-                      // Every provider drills into its detail panel (parity with the
++                    renderRow={(segment, rowNode) => {
++                      // Every lane drills into its detail panel (parity with the
+                       // per-provider dropdowns on main); Claude/Codex additionally get
+                       // the account switcher + runtime toggle + Codex reset credits.
++                      const p = segment.limits
+                       if (p.provider === 'claude') {
+                         return (
+                           <ClaudeSwitcherMenu
 diff --git a/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx b/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
-index a2dab03d9c0905c204cc14d4b85c0ce0c135d36b..c6ab8b0be14735d55abb0ef6a1987a1d17387061 100644
+index c98f91c673ec949a1389094352c1c59e075edc27..337dd671b6e094da2cfd3307ed3a898becede254 100644
 --- a/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
 +++ b/src/renderer/src/components/status-bar/StatusBarVisibilityMenu.tsx
-@@ -143,6 +143,16 @@ export function StatusBarVisibilityMenu({
+@@ -155,6 +155,16 @@ export function StatusBarVisibilityMenu({
            <AgentIcon agent="cursor" size={14} />
            {translate('auto.components.status.bar.StatusBar.cursorUsageMenu', 'Cursor Usage')}
          </DropdownMenuCheckboxItem>
@@ -548,7 +651,7 @@ index a2dab03d9c0905c204cc14d4b85c0ce0c135d36b..c6ab8b0be14735d55abb0ef6a1987a1d
            checked={statusBarItems.includes('ssh')}
            onCheckedChange={() => {
 diff --git a/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx b/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
-index de4f5a0e06f82207e7bf6bdbed518c378529292d..a55cd08f15d1bf35d36bf63e8bc169cbc775498b 100644
+index 4f538ea852fa049c8e13d8ddabb4afb84c0bc516..b87d37d4d831ec950e9dc2ac54c11b4317155291 100644
 --- a/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
 +++ b/src/renderer/src/components/status-bar/UsageRosterPanel.test.tsx
 @@ -93,23 +93,27 @@ describe('UsageRow', () => {
@@ -628,7 +731,7 @@ index de4f5a0e06f82207e7bf6bdbed518c378529292d..a55cd08f15d1bf35d36bf63e8bc169cb
    })
  
    it('renders every window below the header in verbose mode', () => {
-@@ -275,7 +283,7 @@ describe('UsageRosterPanel density picker', () => {
+@@ -304,7 +312,7 @@ describe('UsageRosterPanel density picker', () => {
        root.render(
          <TooltipProvider>
            <UsageRosterPanel
@@ -638,10 +741,10 @@ index de4f5a0e06f82207e7bf6bdbed518c378529292d..a55cd08f15d1bf35d36bf63e8bc169cb
              statusBarUsageMode={statusBarUsageMode}
              onStatusBarUsageModeChange={onStatusBarUsageModeChange}
 diff --git a/src/renderer/src/components/status-bar/UsageRosterPanel.tsx b/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
-index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b7760f0e0 100644
+index 88fcff689b6837d9491bcf9aa73c2fc04319e1bd..b32374cfebad02e21e73a5d78801b3deb8a7c656 100644
 --- a/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
 +++ b/src/renderer/src/components/status-bar/UsageRosterPanel.tsx
-@@ -15,7 +15,13 @@ import { barColor, formatResetCountdown, getWindowSections, ProviderIcon } from
+@@ -16,7 +16,13 @@ import { barColor, formatResetCountdown, getWindowSections, ProviderIcon } from
  import { getProviderDisplayName } from './usage-error-copy'
  import { formatPlanLabel, usageTextColorClass } from './usage-roster-formatting'
  import { getUsageRosterRowState, type UsageRosterRowState } from './usage-roster-row-state'
@@ -655,11 +758,25 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
  
  type ProviderId = ProviderRateLimits['provider']
  export type UsageSection = { label: string; window: RateLimitWindow }
-@@ -54,19 +60,29 @@ function shortLabel(
+@@ -58,13 +64,12 @@ function shortLabel(
      : formatWindowLabel(section.window.windowMinutes)
  }
  
--export function getTightestUsageSection(p: ProviderRateLimits): UsageSection | null {
++/** Highest consumption, whatever % display the user chose: chip tone and "+N" overflow urgency. */
+ export function getTightestUsageSection(p: ProviderRateLimits): UsageSection | null {
+   const sections = usedSections(p)
+   if (sections.length === 0) {
+     return null
+   }
+-  // Why: the footer promises one quiet summary per provider; choose urgency by
+-  // consumption even when the user displays the complementary “% left” value.
+   const tightest = sections.reduce((current, candidate) =>
+     clampUsedPercent(candidate.window.usedPercent) > clampUsedPercent(current.window.usedPercent)
+       ? candidate
+@@ -73,6 +78,22 @@ export function getTightestUsageSection(p: ProviderRateLimits): UsageSection | n
+   return { ...tightest, label: shortLabel(p, tightest, true) }
+ }
+ 
 +/**
 + * The single window the bar pill and the compact row summarize.
 + *
@@ -670,31 +787,25 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
 + * still reports the binding constraint rather than nothing.
 + */
 +export function getStatusBarUsageSection(p: ProviderRateLimits): UsageSection | null {
-   const sections = usedSections(p)
-   if (sections.length === 0) {
-     return null
-   }
--  // Why: the footer promises one quiet summary per provider; choose urgency by
--  // consumption even when the user displays the complementary “% left” value.
--  const tightest = sections.reduce((current, candidate) =>
--    clampUsedPercent(candidate.window.usedPercent) > clampUsedPercent(current.window.usedPercent)
--      ? candidate
--      : current
--  )
--  return { ...tightest, label: shortLabel(p, tightest, true) }
 +  // Identity, not label: `shortLabel` renders both weekly pools as 7d text.
-+  const chosen =
-+    sections.find((s) => s.window === p.weekly) ??
-+    sections.reduce((current, candidate) =>
-+      clampUsedPercent(candidate.window.usedPercent) > clampUsedPercent(current.window.usedPercent)
-+        ? candidate
-+        : current
-+    )
-+  return { ...chosen, label: shortLabel(p, chosen, true) }
++  const weekly = usedSections(p).find((s) => s.window === p.weekly)
++  return weekly ? { ...weekly, label: shortLabel(p, weekly, true) } : getTightestUsageSection(p)
++}
++
++/** Cursor headlines its primary pool and ZCode its tighter product pool (MCP is not the Coding Plan week); the rest take the weekly-first pick. */
+ export function getUsageHeadlineSection(p: ProviderRateLimits): UsageSection | null {
+   if (p.provider === 'cursor') {
+     const primary = usedSections(p).find((section) => section.label === CURSOR_MODELS_BUCKET_NAME)
+@@ -80,7 +101,7 @@ export function getUsageHeadlineSection(p: ProviderRateLimits): UsageSection | n
+       return { ...primary, label: shortLabel(p, primary, true) }
+     }
+   }
+-  return getTightestUsageSection(p)
++  return p.provider === 'zcode' ? getTightestUsageSection(p) : getStatusBarUsageSection(p)
  }
  
  // The soonest-resetting window summarizes the agent's next reset in one line.
-@@ -84,28 +100,45 @@ function UsageMetric({
+@@ -98,28 +119,45 @@ function UsageMetric({
    section,
    label,
    display,
@@ -746,7 +857,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
      </span>
    )
  }
-@@ -116,7 +149,8 @@ export function UsageRow({
+@@ -130,7 +168,8 @@ export function UsageRow({
    state,
    showSignInAction,
    now,
@@ -756,7 +867,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
  }: {
    p: ProviderRateLimits
    display: UsagePercentageDisplay
-@@ -124,13 +158,24 @@ export function UsageRow({
+@@ -138,13 +177,24 @@ export function UsageRow({
    showSignInAction: boolean
    now: number
    mode?: StatusBarUsageMode
@@ -775,15 +886,15 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
 +    : null
    const plan = formatPlanLabel(p.planType)
 -  const reset = hasUsage ? soonestResetLabel(sections, now) : null
--  const tightest = mode === 'compact' ? getTightestUsageSection(p) : null
+-  const tightest = mode === 'compact' ? getUsageHeadlineSection(p) : null
 +  // A countdown off a retained window would read as a live measurement of the current period.
 +  const reset = hasUsage && !stale ? soonestResetLabel(sections, now) : null
-+  const summary = mode === 'compact' ? getStatusBarUsageSection(p) : null
++  const summary = mode === 'compact' ? getUsageHeadlineSection(p) : null
 +  const retry = stale ? getUsageRetryCountdownLabel(p, now) : null
  
    return (
      <div data-usage-mode={mode} className="flex min-w-0 flex-1 flex-col gap-1">
-@@ -140,26 +185,38 @@ export function UsageRow({
+@@ -154,26 +204,38 @@ export function UsageRow({
          </span>
          <span className="min-w-0 shrink truncate text-[13px] font-medium text-foreground">
            {name}
@@ -836,7 +947,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
              />
            </span>
          ) : reset ? (
-@@ -174,21 +231,25 @@ export function UsageRow({
+@@ -188,21 +250,25 @@ export function UsageRow({
                section={section}
                label={shortLabel(p, section)}
                display={display}
@@ -868,7 +979,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
    display,
    statusBarUsageMode,
    onStatusBarUsageModeChange,
-@@ -201,7 +262,7 @@ export function UsageRosterPanel({
+@@ -215,7 +281,7 @@ export function UsageRosterPanel({
    onUsageDetails,
    renderRow
  }: {
@@ -877,7 +988,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
    display: UsagePercentageDisplay
    statusBarUsageMode: StatusBarUsageMode
    onStatusBarUsageModeChange: (mode: StatusBarUsageMode) => void
-@@ -212,20 +273,32 @@ export function UsageRosterPanel({
+@@ -226,20 +292,32 @@ export function UsageRosterPanel({
    canSignIn: (provider: ProviderId) => boolean
    onManageAccounts: () => void
    onUsageDetails: () => void
@@ -920,7 +1031,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
    )
  
    return (
-@@ -286,7 +359,8 @@ export function UsageRosterPanel({
+@@ -300,7 +378,8 @@ export function UsageRosterPanel({
          />
        </div>
        <div className="border-t border-border/70" />
@@ -930,7 +1041,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
          const state = getUsageRosterRowState(p, usedSections(p).length > 0)
          const showSignInAction = state.kind === 'sign-in' && canSignIn(p.provider)
          const rowNode = (
-@@ -297,12 +371,13 @@ export function UsageRosterPanel({
+@@ -311,12 +390,13 @@ export function UsageRosterPanel({
              showSignInAction={showSignInAction}
              now={now}
              mode={statusBarUsageMode}
@@ -945,7 +1056,7 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
                onSelect={() => onSignIn(p.provider)}
                className="w-full cursor-pointer rounded-none px-3.5 py-2.5"
              >
-@@ -310,13 +385,13 @@ export function UsageRosterPanel({
+@@ -324,13 +404,13 @@ export function UsageRosterPanel({
              </DropdownMenuItem>
            )
          }
@@ -962,6 +1073,33 @@ index feb066fadca45a0978e76ef314a4e3c571c6b08d..ef43424a5f6ac29ae135a349d249eb7b
              onSelect={() => onOpenProvider(p.provider)}
              className="w-full cursor-pointer rounded-none px-3.5 py-2.5"
            >
+diff --git a/src/renderer/src/components/status-bar/cursor-usage-headline.test.tsx b/src/renderer/src/components/status-bar/cursor-usage-headline.test.tsx
+index 4f65b6d546db79905a07cefd2748887d4de84466..f53a3210fdefe364af9297e64a2780ca05ba96a5 100644
+--- a/src/renderer/src/components/status-bar/cursor-usage-headline.test.tsx
++++ b/src/renderer/src/components/status-bar/cursor-usage-headline.test.tsx
+@@ -80,7 +80,9 @@ describe('Cursor compact usage headline', () => {
+       expect(getUsageTone(p)).toBe('urgent')
+       expect(getTightestUsageSection(p)?.label).toBe(bucket)
+       expect(getUsageHeadlineSection(p)?.label).toBe('Cursor Models')
+-      const overflow = renderToStaticMarkup(<UsageOverflowChip hidden={[p]} display="used" />)
++      const overflow = renderToStaticMarkup(
++        <UsageOverflowChip hidden={[{ limits: p, badge: null }]} display="used" />
++      )
+       expect(overflow).toContain('data-tone="urgent"')
+       expect(
+         pickCollapsedUsageChips(
+@@ -110,7 +112,10 @@ describe('Cursor compact usage headline', () => {
+       }
+       const markup = renderToStaticMarkup(
+         <UsageRosterPanel
+-          providers={[codex, cursor]}
++          segments={[
++            { key: 'codex', limits: codex, badge: null },
++            { key: 'cursor', limits: cursor, badge: null }
++          ]}
+           display="used"
+           statusBarUsageMode={mode}
+           onStatusBarUsageModeChange={() => {}}
 diff --git a/src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx b/src/renderer/src/components/status-bar/provider-segment-account-badge.test.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..cf9d5d248375b1864458bd76ec5fbc9060a0df79
@@ -1233,12 +1371,214 @@ index 3bab0e1bfcb3b427f08edc1877f03465f6ac0fd7..6bf85db0be2f1f9d7fc8dcee68bf39d3
    })
  
    it('ProviderSegment renders without crashing when a provider window is undefined', async () => {
+diff --git a/src/renderer/src/components/status-bar/status-bar-failing-lane-mark.test.tsx b/src/renderer/src/components/status-bar/status-bar-failing-lane-mark.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..943db5175d4acc95fc45170bdeeb4969850ef0cd
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/status-bar-failing-lane-mark.test.tsx
+@@ -0,0 +1,196 @@
++// @vitest-environment happy-dom
++/**
++ * Upstream's measured density drops a failing lane's label (compact) or the whole lane (into "+N")
++ * when the bar is short of room. Whatever the level, the lane stays marked and its reason stays
++ * one hover away.
++ */
++import { renderToStaticMarkup } from 'react-dom/server'
++import { describe, expect, it, vi } from 'vitest'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++
++vi.mock('@/i18n/i18n', () => ({
++  translate: (_key: string, fallback: string, values: Record<string, string> = {}) =>
++    Object.entries(values).reduce(
++      (text, [key, value]) => text.replace(`{{${key}}}`, value),
++      fallback
++    )
++}))
++vi.mock('@/lib/agent-catalog', () => ({ AgentIcon: () => null }))
++vi.mock('@/hooks/useResetCountdownClock', () => ({ useResetCountdownClock: () => 0 }))
++
++import { ProviderLetterBadge, ProviderSegment, UsageOverflowChip } from './StatusBarProviderSegment'
++
++const DEFERRED = 'Waiting for credential refresh'
++const RATE_LIMITED = 'Refresh rate limited'
++
++function deferredClaude(): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: null,
++    weekly: null,
++    updatedAt: 1,
++    error: 'Usage refresh deferred by a live Claude session',
++    status: 'error',
++    usageMetadata: { failureKind: 'deferred-by-live-session' }
++  }
++}
++
++// A 429 on the usage read keeps the previous sample on screen.
++function rateLimitedClaudeWithSample(): ProviderRateLimits {
++  return {
++    provider: 'claude',
++    session: { usedPercent: 41, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: 'HTTP 429 from the Claude usage endpoint',
++    status: 'error',
++    usageMetadata: { failureKind: 'rate-limited' }
++  }
++}
++
++function healthyCodex(usedPercent: number): ProviderRateLimits {
++  return {
++    provider: 'codex',
++    session: { usedPercent, windowMinutes: 300, resetsAt: null, resetDescription: null },
++    weekly: null,
++    updatedAt: 1,
++    error: null,
++    status: 'ok'
++  }
++}
++
++const badge = { ordinal: 1, email: 'a@example.com', isActive: true }
++
++function parse(markup: string): HTMLElement {
++  return new DOMParser().parseFromString(markup, 'text/html').body
++}
++
++function renderSegment(p: ProviderRateLimits, compact: boolean): HTMLElement {
++  return parse(
++    renderToStaticMarkup(<ProviderSegment p={p} compact={compact} display="used" badge={badge} />)
++  )
++}
++
++describe('failing lane mark', () => {
++  it('keeps the reason on hover of the mark once compact drops the label', () => {
++    const host = renderSegment(deferredClaude(), true)
++
++    const mark = host.querySelector('[role="img"]')
++    expect(mark?.getAttribute('aria-label')).toBe(DEFERRED)
++    expect(mark?.getAttribute('title')).toBe(DEFERRED)
++    expect(mark?.querySelector('svg')).not.toBeNull()
++    expect(host.textContent).not.toContain(DEFERRED)
++  })
++
++  it('spells the reason out in a bounded label, not twice, while the bar has room', () => {
++    const host = renderSegment(deferredClaude(), false)
++
++    const titled = host.querySelectorAll(`[title="${DEFERRED}"]`)
++    expect(titled).toHaveLength(1)
++    expect(titled[0]?.textContent).toBe(DEFERRED)
++    expect(titled[0]?.className).toContain('max-w-[72px]')
++    expect(titled[0]?.className).toContain('truncate')
++    expect(host.querySelector('[role="img"]')).toBeNull()
++  })
++
++  it.each([true, false])(
++    'names the reason on the mark of a lane still showing its retained sample (compact: %s)',
++    (compact) => {
++      const host = renderSegment(rateLimitedClaudeWithSample(), compact)
++
++      expect(host.textContent).toContain('41%')
++      const mark = host.querySelector('[role="img"]')
++      expect(mark?.getAttribute('title')).toBe(RATE_LIMITED)
++      expect(mark?.getAttribute('aria-label')).toBe(RATE_LIMITED)
++    }
++  )
++
++  // Why: the store overlays a retry as `fetching` on the failed state without clearing its error.
++  it.each([true, false])(
++    'keeps a no-sample lane failing while its retry runs (compact: %s)',
++    (compact) => {
++      const host = renderSegment({ ...deferredClaude(), status: 'fetching' }, compact)
++
++      expect(host.querySelector(`[title="${DEFERRED}"]`)).not.toBeNull()
++      expect(host.textContent).not.toContain('···')
++    }
++  )
++
++  it('still shows a first fetch with no failure as loading', () => {
++    const host = renderSegment({ ...deferredClaude(), status: 'fetching', error: null }, true)
++
++    expect(host.textContent).toContain('···')
++    expect(host.querySelector('[role="img"]')).toBeNull()
++  })
++
++  it('leaves a healthy lane unmarked', () => {
++    const host = renderSegment(healthyCodex(34), true)
++
++    expect(host.querySelector('[role="img"]')).toBeNull()
++    expect(host.querySelector('svg.lucide-triangle-alert')).toBeNull()
++  })
++})
++
++describe('letter badge of a failing lane', () => {
++  function renderBadge(p: ProviderRateLimits): HTMLElement {
++    return parse(renderToStaticMarkup(<ProviderLetterBadge p={p} />))
++  }
++
++  it.each([
++    ['without a sample', deferredClaude(), DEFERRED],
++    ['with a retained sample', rateLimitedClaudeWithSample(), RATE_LIMITED],
++    ['while its retry runs', { ...deferredClaude(), status: 'fetching' as const }, DEFERRED]
++  ])('names the reason on hover and to assistive technology (%s)', (_state, p, reason) => {
++    const host = renderBadge(p)
++
++    expect(host.querySelector(`[title="${reason}"]`)?.textContent).toBe('C')
++    expect(host.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(reason)
++  })
++
++  it('stays silent for a healthy lane', () => {
++    const host = renderBadge(healthyCodex(34))
++
++    expect(host.querySelector('[title]')).toBeNull()
++    expect(host.querySelector('[role="img"]')).toBeNull()
++  })
++})
++
++describe('"+N" chip hiding a failing lane', () => {
++  function renderChip(hidden: ProviderRateLimits[]): HTMLElement {
++    const host = parse(
++      renderToStaticMarkup(
++        <UsageOverflowChip
++          hidden={hidden.map((limits, index) => ({
++            limits,
++            badge: limits.provider === 'claude' ? { ...badge, ordinal: index + 1 } : null
++          }))}
++          display="used"
++        />
++      )
++    )
++    return host.querySelector<HTMLElement>('[data-usage-more]')!
++  }
++
++  it('takes the warning tone and names each hidden failure on hover', () => {
++    const chip = renderChip([healthyCodex(12), deferredClaude(), rateLimitedClaudeWithSample()])
++
++    expect(chip.dataset.tone).toBe('warning')
++    expect(chip.textContent).toBe('+3')
++    expect(chip.title).toBe(
++      `Also: Codex 12% used, Claude a@example.com · ${DEFERRED}, Claude a@example.com 41% used · ${RATE_LIMITED}`
++    )
++  })
++
++  it('stays calm while it hides only healthy lanes', () => {
++    const chip = renderChip([healthyCodex(12), healthyCodex(20)])
++
++    expect(chip.dataset.tone).toBe('normal')
++    expect(chip.title).toBe('Also: Codex 12% used, Codex 20% used')
++  })
++
++  it('keeps an urgent hidden lane urgent', () => {
++    const chip = renderChip([deferredClaude(), healthyCodex(97)])
++
++    expect(chip.dataset.tone).toBe('urgent')
++  })
++})
 diff --git a/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx b/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a7dfa38fe207f93e6a47303c436989440cff728
+index 0000000000000000000000000000000000000000..d3c0be0793e5df46b4d8d3afca5a82ec317dbb31
 --- /dev/null
 +++ b/src/renderer/src/components/status-bar/status-bar-language-switch.test.tsx
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,157 @@
 +// @vitest-environment happy-dom
 +/**
 + * StatusBar is a memo boundary and locale catalogs load lazily, so a language switch can land
@@ -1286,6 +1626,23 @@ index 0000000000000000000000000000000000000000..8a7dfa38fe207f93e6a47303c4369894
 +vi.mock('./NativeChatResumeStatusSegment', () => ({ NativeChatResumeStatusSegment: () => null }))
 +vi.mock('./UpdateStatusSegment', () => ({ UpdateStatusSegment: () => null }))
 +vi.mock('./StatusBarVisibilityMenu', () => ({ StatusBarVisibilityMenu: () => null }))
++// Why: happy-dom lays nothing out, so every measured width is 0 and the density hook would
++// step the bar down to its tightest level; the labels under test render at the roomiest.
++vi.mock('./status-bar-density', () => ({
++  useStatusBarDensity: () => ({
++    density: {
++      compact: false,
++      usageTightestOnly: false,
++      segmentsIconOnly: false,
++      collapseUsage: false
++    },
++    overflowing: false,
++    collapsedUsageProviders: [],
++    barRef: () => {},
++    usageRef: () => {},
++    segmentsRef: () => {}
++  })
++}))
 +vi.mock('./UsagePercentageDisplayChangeNotice', () => ({
 +  UsagePercentageDisplayChangeNotice: ({ children }: { children: ReactNode }) => <>{children}</>
 +}))
@@ -1380,7 +1737,7 @@ index 0000000000000000000000000000000000000000..8a7dfa38fe207f93e6a47303c4369894
 +  })
 +})
 diff --git a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts b/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
-index b144ddbdeaeaeb4149a08af7b1d897bd413e4960..ae945e2ae0bc03c5db4963412381fabfb0384ef7 100644
+index c01e803b15186d92240896f2a955cf2115de569c..4bbdceab8e74a7702bc503667e04b6ff7bbe6209 100644
 --- a/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
 +++ b/src/renderer/src/components/status-bar/status-bar-provider-visibility.test.ts
 @@ -77,6 +77,7 @@ function usageSettings(overrides: Partial<UsageProviderSettings> = {}): UsagePro
@@ -1389,13 +1746,13 @@ index b144ddbdeaeaeb4149a08af7b1d897bd413e4960..ae945e2ae0bc03c5db4963412381fabf
      grokAuthConfigured: false,
 +    codexbarAvailable: false,
      cursorAuthConfigured: false,
+     zcodePlanApiKeyConfigured: false,
      ...overrides
-   }
 diff --git a/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts b/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
-index 086540781d71093064b6caf418f8971ea3f1a457..c4f8c413852d1b987ccee255b16e6978c9e14cad 100644
+index 4ade7294abf8f86ba0a9a9aaa051b3205e2cdb9d..51d26125b2473bb6562fa57d260782d80558070f 100644
 --- a/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
 +++ b/src/renderer/src/components/status-bar/status-bar-provider-visibility.ts
-@@ -21,6 +21,9 @@ export type UsageProviderSettings = Pick<
+@@ -23,6 +23,9 @@ export type UsageProviderSettings = Pick<
    // store, neither of which the renderer can see; main reports presence.
    opencodeGoApiKeyConfigured: boolean
    grokAuthConfigured: boolean
@@ -1405,29 +1762,29 @@ index 086540781d71093064b6caf418f8971ea3f1a457..c4f8c413852d1b987ccee255b16e6978
    cursorAuthConfigured: boolean
  }
  
-@@ -34,6 +37,9 @@ type UsageProviderSnapshots = {
-   minimax: ProviderRateLimits | null | undefined
+@@ -37,6 +40,9 @@ type UsageProviderSnapshots = {
    grok: ProviderRateLimits | null | undefined
    cursor: ProviderRateLimits | null | undefined
+   zcode?: ProviderRateLimits | null
 +  // Why: optional — with no codexbar binary main never emits this key, and
 +  // callers that predate it stay valid.
 +  qwencloud?: ProviderRateLimits | null | undefined
  }
  
  type UsageProviderId = ProviderRateLimits['provider']
-@@ -86,7 +92,8 @@ export function hasUsageProviderSettings(
-     settings?.minimaxCookieConfigured === true ||
+@@ -89,7 +95,8 @@ export function hasUsageProviderSettings(
      settings?.minimaxApiKeyConfigured === true ||
      settings?.grokAuthConfigured === true ||
--    settings?.cursorAuthConfigured === true
-+    settings?.cursorAuthConfigured === true ||
+     settings?.cursorAuthConfigured === true ||
+-    settings?.zcodePlanApiKeyConfigured === true
++    settings?.zcodePlanApiKeyConfigured === true ||
 +    settings?.codexbarAvailable === true
    )
  }
  
-@@ -127,6 +134,9 @@ export function hasUsageProviderSettingsForProvider(
-   if (providerId === 'cursor') {
-     return settings.cursorAuthConfigured === true
+@@ -132,6 +139,9 @@ export function hasUsageProviderSettingsForProvider(
+   if (providerId === 'zcode') {
+     return settings.zcodePlanApiKeyConfigured === true
    }
 +  if (providerId === 'qwencloud') {
 +    return settings.codexbarAvailable === true
@@ -1435,7 +1792,7 @@ index 086540781d71093064b6caf418f8971ea3f1a457..c4f8c413852d1b987ccee255b16e6978
    return false
  }
  
-@@ -172,6 +182,10 @@ export function isUsageEmptyState(
+@@ -181,6 +191,10 @@ export function isUsageEmptyState(
    const antigravitySnapshotPending =
      hasUsageProviderSettingsForProvider('antigravity', settings) &&
      isProviderSnapshotPending(providers.antigravity)
@@ -1446,30 +1803,30 @@ index 086540781d71093064b6caf418f8971ea3f1a457..c4f8c413852d1b987ccee255b16e6978
    if (
      isProviderSnapshotPending(providers.claude) ||
      isProviderSnapshotPending(providers.codex) ||
-@@ -181,7 +195,8 @@ export function isUsageEmptyState(
-     antigravitySnapshotPending ||
+@@ -191,7 +205,8 @@ export function isUsageEmptyState(
      isProviderSnapshotPending(providers.minimax) ||
      isProviderSnapshotPending(providers.grok) ||
--    isProviderSnapshotPending(providers.cursor)
-+    isProviderSnapshotPending(providers.cursor) ||
+     isProviderSnapshotPending(providers.cursor) ||
+-    (providers.zcode !== undefined && isProviderSnapshotPending(providers.zcode))
++    (providers.zcode !== undefined && isProviderSnapshotPending(providers.zcode)) ||
 +    codexBarSnapshotsPending
    ) {
      return false
    }
-@@ -195,6 +210,7 @@ export function isUsageEmptyState(
-     !isProviderConfigured(providers.antigravity) &&
+@@ -206,6 +221,7 @@ export function isUsageEmptyState(
      !isProviderConfigured(providers.minimax) &&
      !isProviderConfigured(providers.grok) &&
--    !isProviderConfigured(providers.cursor)
-+    !isProviderConfigured(providers.cursor) &&
+     !isProviderConfigured(providers.cursor) &&
+-    !isProviderConfigured(providers.zcode)
++    !isProviderConfigured(providers.zcode) &&
 +    !isProviderConfigured(providers.qwencloud)
    )
  }
 diff --git a/src/renderer/src/components/status-bar/tooltip.test.ts b/src/renderer/src/components/status-bar/tooltip.test.ts
-index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d25424b9d 100644
+index 6f928745dbbc74f342af20662e8c4a3934aaea16..6bbb10fb0517484511ab2b743edbbef0e1f682f5 100644
 --- a/src/renderer/src/components/status-bar/tooltip.test.ts
 +++ b/src/renderer/src/components/status-bar/tooltip.test.ts
-@@ -186,10 +186,12 @@ describe('provider usage error copy', () => {
+@@ -188,10 +188,12 @@ describe('provider usage error copy', () => {
      }
    })
  
@@ -1484,7 +1841,7 @@ index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d
      expect(getProviderUsageErrorMessage(p)).toBe('Claude usage is rate limited right now.')
    })
  
-@@ -198,12 +200,24 @@ describe('provider usage error copy', () => {
+@@ -200,12 +202,24 @@ describe('provider usage error copy', () => {
        error: 'Rate limit reached while refreshing OAuth access token.'
      })
  
@@ -1510,7 +1867,7 @@ index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d
    it('classifies the Codex chatgpt-auth-required rate-limits read error as auth, not Limited', () => {
      // Why: the message mentions "rate limits" only as the object it failed to
      // read; labeling it "Limited" would wrongly imply the user hit a limit.
-@@ -229,7 +243,9 @@ describe('provider usage error copy', () => {
+@@ -231,7 +245,9 @@ describe('provider usage error copy', () => {
      )
    })
  
@@ -1521,7 +1878,7 @@ index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d
      const p = provider({
        error:
          'Claude usage refresh is waiting for the live Claude terminal to rotate its credentials.',
-@@ -239,9 +255,9 @@ describe('provider usage error copy', () => {
+@@ -241,9 +257,9 @@ describe('provider usage error copy', () => {
        }
      })
  
@@ -1534,7 +1891,7 @@ index fd7561e250cdc5fcd07b53f876b13098c5dc9ca0..3a11870f77220b96972893ed08a5cf1d
    })
  
 diff --git a/src/renderer/src/components/status-bar/tooltip.tsx b/src/renderer/src/components/status-bar/tooltip.tsx
-index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c5915680873279ae52 100644
+index d871f8943eb4b2517a6500ccd1d1731a3973c357..5c56a0fe83bf8d63b446b5828078791524097a09 100644
 --- a/src/renderer/src/components/status-bar/tooltip.tsx
 +++ b/src/renderer/src/components/status-bar/tooltip.tsx
 @@ -11,6 +11,7 @@ import {
@@ -1545,9 +1902,9 @@ index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c591568087
  import {
    clampUsedPercent,
    getDisplayedUsagePercentage,
-@@ -97,9 +98,14 @@ export function ProviderIcon({ provider }: { provider: string }): React.JSX.Elem
-   if (provider === 'grok') {
-     return <AgentIcon agent="grok" size={13} />
+@@ -108,9 +109,14 @@ export function ProviderIcon({ provider }: { provider: string }): React.JSX.Elem
+   if (provider === 'zcode') {
+     return <AgentIcon agent="zcode" size={13} />
    }
 +  // Why: reuse the agent catalog's brand marks — these providers meter the same
 +  // vendors already listed there, so no new asset is needed.
@@ -1560,7 +1917,7 @@ index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c591568087
    return <ClaudeIcon size={13} />
  }
  
-@@ -117,22 +123,21 @@ function ErrorMessage({
+@@ -128,22 +134,21 @@ function ErrorMessage({
  }): React.JSX.Element {
    const labelClass = inverted ? 'text-background/80' : 'text-foreground/85'
    const detailClass = inverted ? 'text-background/55' : 'text-muted-foreground'
@@ -1594,7 +1951,7 @@ index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c591568087
        <div className={detailClass}>{message}</div>
      </div>
    )
-@@ -145,39 +150,23 @@ function ErrorMessage({
+@@ -156,39 +161,23 @@ function ErrorMessage({
  export function getWindowSections(
    p: ProviderRateLimits
  ): { label: string; window: RateLimitWindow | null }[] {
@@ -1651,21 +2008,23 @@ index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c591568087
    if (p.fableWeekly !== undefined && p.fableWeekly !== null) {
      sections.push({
        label: translate('auto.components.status.bar.tooltip.a79c64f87e', 'Fable'),
-@@ -186,7 +175,12 @@ export function getWindowSections(
+@@ -197,10 +186,14 @@ export function getWindowSections(
    }
    if (p.monthly !== undefined && p.monthly !== null) {
      sections.push({
--      label: translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
 +      // Why: Cursor reports the plan total in `monthly` and its pools as buckets;
 +      // "Plan" names the number closest to the user's cap.
-+      label:
-+        p.provider === 'cursor'
-+          ? translate('auto.components.status.bar.tooltip.cursor.plan', 'Plan')
-+          : translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
+       label:
+         p.provider === 'zcode'
+           ? translate('auto.components.status.bar.tooltip.zcode.mcp', 'MCP')
+-          : translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
++          : p.provider === 'cursor'
++            ? translate('auto.components.status.bar.tooltip.cursor.plan', 'Plan')
++            : translate('auto.components.status.bar.tooltip.7f7f208060', 'Monthly'),
        window: p.monthly
      })
    }
-@@ -236,20 +230,26 @@ function ProviderRateLimitWindowSection({
+@@ -238,20 +231,26 @@ function ProviderRateLimitWindowSection({
    }
    const usedPct = clampUsedPercent(window.usedPercent)
    const displayedPct = getDisplayedUsagePercentage(usedPct, usagePercentageDisplay)
@@ -1698,7 +2057,7 @@ index be15ae18c02f01b62d8296fc57541b39e6ff4b93..b7882d897df102bb72e909c591568087
          {resetLabel && <span>{resetLabel}</span>}
        </div>
      </div>
-@@ -371,7 +371,8 @@ export function ProviderPanel({
+@@ -385,7 +384,8 @@ export function ProviderPanel({
  
        {p.error ? (
          <ErrorMessage
@@ -2056,10 +2415,10 @@ index 0000000000000000000000000000000000000000..de6ef5719f8f2a9de2089cfba9ada81a
 +  }
 +}
 diff --git a/src/renderer/src/components/status-bar/usage-error-copy.ts b/src/renderer/src/components/status-bar/usage-error-copy.ts
-index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae75431f079cd 100644
+index 95942ddb5b7231c3da84b958392b0ed5a6989324..743675eae247d502a31e46991194b3c08d3208e2 100644
 --- a/src/renderer/src/components/status-bar/usage-error-copy.ts
 +++ b/src/renderer/src/components/status-bar/usage-error-copy.ts
-@@ -29,6 +29,9 @@ export function getProviderDisplayName(provider: ProviderRateLimits['provider'])
+@@ -32,6 +32,9 @@ export function getProviderDisplayName(provider: ProviderRateLimits['provider'])
    if (provider === 'cursor') {
      return 'Cursor'
    }
@@ -2069,7 +2428,7 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
    return provider
  }
  
-@@ -90,8 +93,13 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+@@ -93,8 +96,13 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
      switch (p.usageMetadata?.failureKind) {
        case 'deferred-by-live-session':
          return translate(
@@ -2085,7 +2444,7 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
          )
        case 'stale-token':
        case 'refreshable-credentials-without-token':
-@@ -108,7 +116,6 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+@@ -111,7 +119,6 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
        case 'missing-scope':
        case 'no-subscription':
        case 'parse':
@@ -2093,7 +2452,7 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
        case 'server':
        case 'unknown':
        case undefined:
-@@ -134,7 +141,11 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
+@@ -137,7 +144,11 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
      )
    }
    if (isUsageRateLimitError(p.error)) {
@@ -2106,7 +2465,7 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
    }
    return translate('auto.components.status.bar.tooltip.e740f92596', 'Refresh failed')
  }
-@@ -170,8 +181,13 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
+@@ -173,8 +184,13 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
      switch (p.usageMetadata?.failureKind) {
        case 'deferred-by-live-session':
          return translate(
@@ -2122,7 +2481,7 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
          )
        case 'stale-token':
        case 'refreshable-credentials-without-token':
-@@ -202,7 +218,6 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
+@@ -205,7 +221,6 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
          )
        case 'missing-credentials':
        case 'no-subscription':
@@ -2130,14 +2489,68 @@ index a0a6cabf1a9a39784e511a396f67e98d0203efc3..d1eec54537a0c92dcda5cd8e44fae754
        case 'unknown':
        case undefined:
          break
+diff --git a/src/renderer/src/components/status-bar/usage-lane-marks.tsx b/src/renderer/src/components/status-bar/usage-lane-marks.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..f577322ab94e0e6f4354d55b14d800abcef0621d
+--- /dev/null
++++ b/src/renderer/src/components/status-bar/usage-lane-marks.tsx
+@@ -0,0 +1,48 @@
++import { AlertTriangle } from 'lucide-react'
++import React from 'react'
++import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
++import { ProviderIcon } from './tooltip'
++import type { UsageAccountBadge } from './usage-account-segments'
++
++/** A failing lane's warning mark; given a reason, it names it on hover where no label does. */
++export function RefreshFailingMark({ reason }: { reason: string | null }): React.JSX.Element {
++  const icon = <AlertTriangle size={11} className="shrink-0 text-muted-foreground/80" />
++  if (reason === null) {
++    return icon
++  }
++  return (
++    <span role="img" aria-label={reason} title={reason} className="inline-flex shrink-0">
++      {icon}
++    </span>
++  )
++}
++
++export function ProviderAccountMark({
++  provider,
++  badge
++}: {
++  provider: ProviderRateLimits['provider']
++  badge: UsageAccountBadge | null
++}): React.JSX.Element {
++  if (!badge) {
++    return <ProviderIcon provider={provider} />
++  }
++  return (
++    <span
++      className="inline-flex items-center gap-1"
++      title={badge.email ?? undefined}
++      aria-label={badge.email ?? `${provider} ${badge.ordinal}`}
++    >
++      <ProviderIcon provider={provider} />
++      <span
++        className={
++          badge.isActive
++            ? 'text-[10px] font-semibold leading-none tabular-nums text-foreground/90'
++            : 'text-[10px] font-medium leading-none tabular-nums text-muted-foreground/60'
++        }
++      >
++        {badge.ordinal}
++      </span>
++    </span>
++  )
++}
 diff --git a/src/renderer/src/components/status-bar/usage-provider-settings-target.ts b/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
-index 39380e135950c9f66c00f1d94bb5ed3198ad97c2..3052279c641a0f8e6fbfad3d1086d2d0d412f783 100644
+index ec9b79ca82b919886fa1c8775d9f7525b8c33a62..d88373e4fd4d55a61f37f3614d11ad3a4d1af26a 100644
 --- a/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
 +++ b/src/renderer/src/components/status-bar/usage-provider-settings-target.ts
-@@ -23,5 +23,8 @@ export function getUsageProviderAccountsSectionId(
-     case 'kimi':
-       // Why: Orca must not mutate Kimi's CLI-owned credential lifecycle.
+@@ -25,5 +25,8 @@ export function getUsageProviderAccountsSectionId(
        return null
+     case 'zcode':
+       return 'accounts-zcode'
 +    case 'qwencloud':
 +      // Why: codexbar-metered providers are read-only — Orca owns no sign-in for them.
 +      return null
@@ -2856,31 +3269,31 @@ index 0000000000000000000000000000000000000000..dad388d4c0b91f5363e8b240c61770a2
 +  )
 +}
 diff --git a/src/renderer/src/components/status-bar/use-status-bar-controller.ts b/src/renderer/src/components/status-bar/use-status-bar-controller.ts
-index b7f57c7f1e7b950c82cd25e6bf2d5f26a11a82df..f0d975fdc55fd8d7de86f69a73d469b7c8fc131b 100644
+index 1c98e3e2f47f92ddd36a4c03615dbcfd109fb5ad..3bc4b37705ab4bbe5ae3574e859ab86f3b3ee4ba 100644
 --- a/src/renderer/src/components/status-bar/use-status-bar-controller.ts
 +++ b/src/renderer/src/components/status-bar/use-status-bar-controller.ts
 @@ -10,6 +10,7 @@ import { getVisibleUsageProvider, isUsageEmptyState } from './status-bar-provide
  import { getUsageProviderAccountsSectionId } from './usage-provider-settings-target'
  import { CLOSE_ALL_CONTEXT_MENUS_EVENT, useStatusBarMenuFocusHandoff } from './ProviderDetailsMenu'
- import { observeStatusBarContainer } from './status-bar-container-observer'
+ import { useStatusBarDensity } from './status-bar-density'
 +import { buildStatusBarUsageBarSegments } from './usage-account-segments'
  
  export function useStatusBarController(floatingTerminalOpen: boolean) {
    const floatingTerminalShortcut = useShortcutLabel('floatingTerminal.toggle')
-@@ -100,6 +101,7 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-   }
+@@ -93,6 +94,7 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
  
-   const { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor } = rateLimits
+   const { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor, zcode } =
+     rateLimits
 +  const { qwencloud } = rateLimits
  
    // Why: a bar is earned by a live snapshot or durable Settings setup; detection-gating hides per-CLI bars when the agent isn't on PATH.
    // Why: Antigravity has no persisted credential, so a checked status item + detected CLI is the durable "show its slot" signal.
-@@ -115,7 +117,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-     minimaxApiKeyConfigured: rateLimits.minimaxApiKeyConfigured,
+@@ -108,7 +110,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
      opencodeGoApiKeyConfigured: rateLimits.opencodeGoApiKeyConfigured,
      grokAuthConfigured: rateLimits.grokAuthConfigured,
--    cursorAuthConfigured: rateLimits.cursorAuthConfigured
-+    cursorAuthConfigured: rateLimits.cursorAuthConfigured,
+     cursorAuthConfigured: rateLimits.cursorAuthConfigured,
+-    zcodePlanApiKeyConfigured: rateLimits.zcodePlanApiKeyConfigured
++    zcodePlanApiKeyConfigured: rateLimits.zcodePlanApiKeyConfigured,
 +    codexbarAvailable: rateLimits.codexbarAvailable
    }
    const visibleClaude = getVisibleUsageProvider('claude', claude, usageSettings)
@@ -2895,17 +3308,17 @@ index b7f57c7f1e7b950c82cd25e6bf2d5f26a11a82df..f0d975fdc55fd8d7de86f69a73d469b7
    const showSsh = statusBarItems.includes('ssh')
    const showResourceUsage = statusBarItems.includes('resource-usage')
    const showPorts = statusBarItems.includes('ports')
-@@ -172,11 +178,23 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-     showAntigravity ||
+@@ -173,11 +179,24 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
      showMiniMax ||
      showGrok ||
--    showCursor
-+    showCursor ||
+     showCursor ||
+-    showZcode
++    showZcode ||
 +    showQwenCloud
    const anyVisible = hasVisibleUsageMeters || showResourceUsage
    // Why: include Settings so durable managed accounts count — a configured user isn't shown the empty state while snapshots hydrate.
    const isEmptyUsageState = isUsageEmptyState(
--    { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor },
+-    { claude, codex, gemini, opencodeGo, kimi, antigravity, minimax, grok, cursor, zcode },
 +    {
 +      claude,
 +      codex,
@@ -2916,27 +3329,28 @@ index b7f57c7f1e7b950c82cd25e6bf2d5f26a11a82df..f0d975fdc55fd8d7de86f69a73d469b7
 +      minimax,
 +      grok,
 +      cursor,
++      zcode,
 +      qwencloud
 +    },
      usageSettings
    )
    // Why: one-time nudge — once dismissed, stays hidden even if providers reconnect later.
-@@ -190,7 +208,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-     antigravity?.status === 'fetching' ||
+@@ -192,7 +211,8 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
      minimax?.status === 'fetching' ||
      grok?.status === 'fetching' ||
--    cursor?.status === 'fetching'
-+    cursor?.status === 'fetching' ||
+     cursor?.status === 'fetching' ||
+-    zcode?.status === 'fetching'
++    zcode?.status === 'fetching' ||
 +    qwencloud?.status === 'fetching'
  
-   const compact = containerWidth < 900
-   const iconOnly = containerWidth < 500
-@@ -210,8 +229,33 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-     showKimi ? visibleKimi : null,
+   const floatingTerminalActionLabel = floatingTerminalOpen
+     ? 'Minimize Floating Workspace'
+@@ -211,8 +231,33 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
      showMiniMax ? visibleMiniMax : null,
      showGrok ? visibleGrok : null,
--    showCursor ? visibleCursor : null
-+    showCursor ? visibleCursor : null,
+     showCursor ? visibleCursor : null,
+-    showZcode ? visibleZcode : null
++    showZcode ? visibleZcode : null,
 +    showQwenCloud ? visibleQwenCloud : null
    ].filter((p): p is ProviderRateLimits => p !== null)
 +  const usageBarSegments = buildStatusBarUsageBarSegments({
@@ -2966,44 +3380,40 @@ index b7f57c7f1e7b950c82cd25e6bf2d5f26a11a82df..f0d975fdc55fd8d7de86f69a73d469b7
  
    const handleManageAccounts = (): void => {
      setUsageMenuOpen(false)
-@@ -261,7 +305,7 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
-     menuPoint,
+@@ -264,9 +309,9 @@ export function useStatusBarController(floatingTerminalOpen: boolean) {
+     overflowing,
      petEnabled,
      recordFeatureInteraction,
 -    rosterProviders,
+     segmentsIconOnly,
+     segmentsRef,
 +    usageBarSegments,
      setMenuOpen,
      setMenuPoint,
      setStatusBarUsageMode,
 diff --git a/src/renderer/src/i18n/locales/en.json b/src/renderer/src/i18n/locales/en.json
-index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba96db743e 100644
+index a623d23664c838e3ecc69479252d296c3418a452..dc9e48f2cd4509a3547a73cbb34fd102c51f18a8 100644
 --- a/src/renderer/src/i18n/locales/en.json
 +++ b/src/renderer/src/i18n/locales/en.json
-@@ -151,7 +151,8 @@
-         "portsToggleDescription": "Show live workspace ports. Click it for workspace-scoped ports and external listeners.",
+@@ -205,7 +205,8 @@
          "antigravityToggleDescription": "Show Antigravity subscription usage for the active workspace.",
          "grokToggleDescription": "Show Grok subscription credit usage when signed in via Grok CLI.",
--        "cursorToggleDescription": "Show Cursor plan usage when signed in through cursor-agent or Cursor IDE."
-+        "cursorToggleDescription": "Show Cursor plan usage when signed in through cursor-agent or Cursor IDE.",
+         "cursorToggleDescription": "Show Cursor plan usage when signed in through cursor-agent or Cursor IDE.",
+-        "zcodeToggleDescription": "Show ZCode Coding Plan quota usage."
++        "zcodeToggleDescription": "Show ZCode Coding Plan quota usage.",
 +        "qwenCloudToggleDescription": "Show Qwen Cloud subscription usage reported by the CodexBar CLI."
        },
        "menuBarIcon": {
          "title": "Show Menu Bar Icon",
-@@ -3814,10 +3815,11 @@
+@@ -3900,6 +3901,7 @@
              "antigravityUsageDetails": "Open Antigravity usage details",
              "grokUsageAria": "Open Grok usage details",
              "grokUsageMenu": "Grok Usage",
-+            "cursorUsageMenu": "Cursor Usage",
 +            "qwenCloudUsageMenu": "Qwen Cloud Usage",
              "floatingTerminalNewActivity": "{{label}}, new activity",
-             "codexSignInSuccess": "Signed in to Codex",
--            "codexSignInError": "Codex sign-in failed. Please try again.",
--            "cursorUsageMenu": "Cursor Usage"
-+            "codexSignInError": "Codex sign-in failed. Please try again."
-           },
-           "StatusBarUsageEmptyCta": {
-             "828c764a79": "Connect an account",
-@@ -3973,8 +3975,6 @@
+             "4fba7dc1e7": "{{value0}} bal",
+             "4025a6f62f": "Unlimited",
+@@ -4077,8 +4079,6 @@
              "2c35eca8d4": "Unable to fetch usage",
              "1292d4f2ee": "Unavailable",
              "7567cd1c6b": "Usage unavailable",
@@ -3012,7 +3422,7 @@ index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba
              "e740f92596": "Refresh failed",
              "8418ec448d": "{{value0}} usage could not be refreshed. Agent sessions may still be signed in.",
              "45198c7d95": "1 rate-limit reset available",
-@@ -3983,12 +3983,10 @@
+@@ -4087,12 +4087,10 @@
              "d1e442a9e5": "Expires now",
              "6cf9eaed10": "Next expires in {{value0}}",
              "20ad66aed1": "Expires in {{value0}}",
@@ -3025,7 +3435,7 @@ index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba
              "42fdd4da1d": "Claude sign-in is being refreshed. Agent sessions may still be signed in.",
              "c06c1d215d": "Claude usage could not be refreshed because the network request failed.",
              "cabdc2a9e0": "Claude sign-in credentials could not be read.",
-@@ -4004,6 +4002,20 @@
+@@ -4116,6 +4114,20 @@
                  "cookie": "MiniMax session cookie expired. Replace it in Settings."
                }
              },
@@ -3046,10 +3456,10 @@ index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba
              "usage": {
                "noSubscription": {
                  "label": "No subscription"
-@@ -4044,7 +4056,14 @@
+@@ -4156,7 +4168,14 @@
              "compact": "Compact",
              "detailedTooltip": "Full usage with bars, labels, and percentages",
-             "compactTooltip": "Condensed usage: only the tightest window",
+             "compactTooltip": "Condensed usage: one summary per provider",
 -            "footerDetailAria": "Usage footer detail"
 +            "footerDetailAria": "Usage footer detail",
 +            "stale": {
@@ -3062,7 +3472,7 @@ index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba
            },
            "RemoteServerUpdateStatusSegment": {
              "updating": "Updating {{value0}}/{{value1}}",
-@@ -9352,6 +9371,11 @@
+@@ -9516,6 +9535,11 @@
              "e7d1b0f3a5": "Show Grok weekly credit usage from Grok CLI OAuth.",
              "d6c0a9e2f4": "grok",
              "c5b9f8d1e3": "xai",
@@ -3073,36 +3483,30 @@ index 20551640904d4b7eadcb5fdbd0e348dde747601c..3b61be90565c42755634fb2e1ff9ecba
 +            "2cf90681da": "codexbar",
              "usagePercentageDisplayTitle": "Usage percentages",
              "usagePercentageDisplayDescription": "Choose whether provider limits show the percentage used or remaining.",
-             "tray": {
+             "zcodeUsageTitle": "ZCode Usage",
 diff --git a/src/renderer/src/i18n/locales/es.json b/src/renderer/src/i18n/locales/es.json
-index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712f47c9d5a 100644
+index 40f587ab41b424c8719bcc73e4c5d5afede73b2c..77849901de73c0cb4297149d4d3ce8e988f8cfe1 100644
 --- a/src/renderer/src/i18n/locales/es.json
 +++ b/src/renderer/src/i18n/locales/es.json
-@@ -35,7 +35,8 @@
-         "portsToggleDescription": "Muestra los puertos activos de los espacios de trabajo. Haz clic para ver los puertos de cada espacio de trabajo y los puertos externos.",
+@@ -42,7 +42,8 @@
          "antigravityToggleDescription": "Muestra el uso de suscripción de Antigravity para el espacio de trabajo activo.",
          "grokToggleDescription": "Muestra el uso de créditos de suscripción de Grok cuando has iniciado sesión con Grok CLI.",
--        "cursorToggleDescription": "Muestra el uso del plan de Cursor cuando inicias sesión con cursor-agent o el IDE de Cursor."
-+        "cursorToggleDescription": "Muestra el uso del plan de Cursor cuando inicias sesión con cursor-agent o el IDE de Cursor.",
+         "cursorToggleDescription": "Muestra el uso del plan de Cursor cuando inicias sesión con cursor-agent o el IDE de Cursor.",
+-        "zcodeToggleDescription": "Mostrar el uso de la cuota del plan de codificación ZCode."
++        "zcodeToggleDescription": "Mostrar el uso de la cuota del plan de codificación ZCode.",
 +        "qwenCloudToggleDescription": "Muestra el uso de suscripción de Qwen Cloud informado por la CLI de CodexBar."
        },
        "menuBarIcon": {
          "title": "Mostrar icono en la barra de menús",
-@@ -3339,10 +3340,11 @@
+@@ -3705,6 +3706,7 @@
              "antigravityUsageDetails": "Abrir detalles de uso de Antigravity",
              "grokUsageAria": "Abrir detalles de uso de Grok",
              "grokUsageMenu": "Uso de Grok",
-+            "cursorUsageMenu": "Uso de Cursor",
 +            "qwenCloudUsageMenu": "Uso de Qwen Cloud",
              "floatingTerminalNewActivity": "{{label}}, nueva actividad",
+             "4fba7dc1e7": "saldo {{value0}}",
              "codexSignInSuccess": "Sesión iniciada en Codex",
--            "codexSignInError": "No se pudo iniciar sesión en Codex. Inténtalo de nuevo.",
--            "cursorUsageMenu": "Uso de Cursor"
-+            "codexSignInError": "No se pudo iniciar sesión en Codex. Inténtalo de nuevo."
-           },
-           "StatusBarUsageEmptyCta": {
-             "828c764a79": "Conectar una cuenta",
-@@ -3482,8 +3484,6 @@
+@@ -3851,8 +3853,6 @@
              "2c35eca8d4": "No se pudo obtener el uso",
              "1292d4f2ee": "No disponible",
              "7567cd1c6b": "Uso no disponible",
@@ -3111,7 +3515,7 @@ index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712
              "e740f92596": "Error al actualizar",
              "8418ec448d": "No se pudo actualizar el uso de {{value0}}. Es posible que las sesiones de agentes sigan iniciadas.",
              "45198c7d95": "1 reset de rate limit disponible",
-@@ -3492,12 +3492,10 @@
+@@ -3861,12 +3861,10 @@
              "d1e442a9e5": "Vence ahora",
              "6cf9eaed10": "El siguiente vence en {{value0}}",
              "20ad66aed1": "Vence en {{value0}}",
@@ -3124,7 +3528,7 @@ index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712
              "42fdd4da1d": "Se está actualizando el inicio de sesión de Claude. Las sesiones de agentes pueden seguir iniciadas.",
              "c06c1d215d": "No se pudo actualizar el uso de Claude porque falló la solicitud de red.",
              "cabdc2a9e0": "No se pudieron leer las credenciales de inicio de sesión de Claude.",
-@@ -3506,6 +3504,20 @@
+@@ -3875,6 +3873,20 @@
              "d1b7f509ac": "Run grok in a terminal on the computer running Orca and wait for it to start. If prompted, complete sign-in, then retry usage. You do not need to send a chat message.",
              "f90b3d7a16": "Run Kimi to refresh",
              "a37e8c15d4": "Run kimi in a terminal on the computer running Orca and wait for it to start, then retry usage.",
@@ -3145,12 +3549,12 @@ index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712
              "usage": {
                "noSubscription": {
                  "label": "Sin suscripción"
-@@ -3546,7 +3558,14 @@
+@@ -3925,7 +3937,14 @@
              "compact": "Compact",
              "footerDetailAria": "Usage footer detail",
              "detailedTooltip": "Uso completo con barras, etiquetas y porcentajes",
--            "compactTooltip": "Uso condensado: sólo la ventana más estrecha"
-+            "compactTooltip": "Uso condensado: sólo la ventana más estrecha",
+-            "compactTooltip": "Uso condensado: un resumen por proveedor"
++            "compactTooltip": "Uso condensado: un resumen por proveedor",
 +            "stale": {
 +              "noSample": "sin lectura anterior",
 +              "justRead": "última lectura ahora mismo",
@@ -3161,7 +3565,7 @@ index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712
            },
            "RemoteServerUpdateStatusSegment": {
              "updating": "Updating {{value0}}/{{value1}}",
-@@ -8064,6 +8083,11 @@
+@@ -9246,6 +9265,11 @@
              "e7d1b0f3a5": "Muestra el uso semanal de créditos de Grok desde OAuth de Grok CLI.",
              "d6c0a9e2f4": "grok",
              "c5b9f8d1e3": "xai",
@@ -3174,10 +3578,10 @@ index e9ed1a51aa97d78cd4dcbccaa1335ac4337d0730..52a5f03fe3a89b035843240096c59712
              "usagePercentageDisplayDescription": "Elige si los límites del proveedor muestran el porcentaje usado o restante.",
              "cursor": {
 diff --git a/src/renderer/src/i18n/locales/fr.json b/src/renderer/src/i18n/locales/fr.json
-index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d4645ecfc84 100644
+index 606c04550625ce5961b7a1f7fd1288a09f94e87f..57ccc58c841c0523cd25c7ed1a0bebeeda67f30a 100644
 --- a/src/renderer/src/i18n/locales/fr.json
 +++ b/src/renderer/src/i18n/locales/fr.json
-@@ -3920,8 +3920,6 @@
+@@ -3962,8 +3962,6 @@
              "2c35eca8d4": "Impossible de récupérer l'utilisation",
              "1292d4f2ee": "Indisponible",
              "7567cd1c6b": "Utilisation indisponible",
@@ -3186,7 +3590,7 @@ index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d46
              "e740f92596": "Échec de l'actualisation",
              "8418ec448d": "L'utilisation de {{value0}} n'a pas pu être actualisée. Des sessions d'agent sont peut-être encore connectées.",
              "45198c7d95": "1 réinitialisation de limite de débit disponible",
-@@ -3930,12 +3928,10 @@
+@@ -3972,12 +3970,10 @@
              "d1e442a9e5": "Expire maintenant",
              "6cf9eaed10": "La prochaine expire dans {{value0}}",
              "20ad66aed1": "Expire dans {{value0}}",
@@ -3199,7 +3603,7 @@ index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d46
              "42fdd4da1d": "La connexion Claude est en cours d'actualisation. Des sessions d'agent sont peut-être encore connectées.",
              "c06c1d215d": "L'utilisation de Claude n'a pas pu être actualisée car la requête réseau a échoué.",
              "cabdc2a9e0": "Les identifiants de connexion Claude n'ont pas pu être lus.",
-@@ -3944,6 +3940,20 @@
+@@ -3986,6 +3982,20 @@
              "d1b7f509ac": "Exécutez grok dans un terminal sur l'ordinateur qui fait tourner Orca et attendez son démarrage. Si demandé, terminez la connexion, puis réessayez l'utilisation. Inutile d'envoyer un message.",
              "f90b3d7a16": "Exécutez Kimi pour actualiser",
              "a37e8c15d4": "Exécutez kimi dans un terminal sur l'ordinateur qui fait tourner Orca et attendez son démarrage, puis réessayez l'utilisation.",
@@ -3220,10 +3624,10 @@ index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d46
              "minimax": {
                "expired": {
                  "label": "Connexion expirée",
-@@ -3991,7 +4001,14 @@
+@@ -4036,7 +4046,14 @@
              "compact": "Compact",
              "detailedTooltip": "Utilisation complète avec barres, libellés et pourcentages",
-             "compactTooltip": "Utilisation condensée : uniquement la fenêtre la plus contrainte",
+             "compactTooltip": "Utilisation condensée : un résumé par fournisseur",
 -            "footerDetailAria": "Détail du pied de page d'utilisation"
 +            "footerDetailAria": "Détail du pied de page d'utilisation",
 +            "stale": {
@@ -3237,34 +3641,28 @@ index e19217dc04c009753cb664d6d7bc80ffd0201c66..b32ecec097c2268f4482cb0b0f461d46
            "RemoteServerUpdateStatusSegment": {
              "updating": "Mise à jour de {{value0}}/{{value1}}",
 diff --git a/src/renderer/src/i18n/locales/ja.json b/src/renderer/src/i18n/locales/ja.json
-index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d783087ab5 100644
+index 6d1b62a60fa0c6782cd216cd3d992dab26c8b4e2..e98476f188211fbca9feef7a9cce4af33bee288a 100644
 --- a/src/renderer/src/i18n/locales/ja.json
 +++ b/src/renderer/src/i18n/locales/ja.json
-@@ -35,7 +35,8 @@
-         "portsToggleDescription": "ライブワークスペースポートを表示します。ワークスペーススコープのポートと外部リスナーの場合はこれをクリックします。",
+@@ -42,7 +42,8 @@
          "antigravityToggleDescription": "アクティブなワークスペースの Antigravity サブスクリプション使用量を表示します。",
          "grokToggleDescription": "Grok CLI でサインインしている場合に Grok サブスクリプションのクレジット使用量を表示します。",
--        "cursorToggleDescription": "cursor-agent または Cursor IDE でサインインしている場合に Cursor プランの使用状況を表示します。"
-+        "cursorToggleDescription": "cursor-agent または Cursor IDE でサインインしている場合に Cursor プランの使用状況を表示します。",
+         "cursorToggleDescription": "cursor-agent または Cursor IDE でサインインしている場合に Cursor プランの使用状況を表示します。",
+-        "zcodeToggleDescription": "ZCode コーディングプランのクォータ使用量を表示します。"
++        "zcodeToggleDescription": "ZCode コーディングプランのクォータ使用量を表示します。",
 +        "qwenCloudToggleDescription": "CodexBar CLI から取得した Qwen Cloud サブスクリプション使用量を表示します。"
        },
        "menuBarIcon": {
          "title": "メニューバーアイコンを表示",
-@@ -3666,10 +3667,11 @@
+@@ -3705,6 +3706,7 @@
              "antigravityUsageDetails": "Antigravity の使用状況詳細を開く",
              "grokUsageAria": "Grok の使用状況詳細を開く",
              "grokUsageMenu": "Grok の使用状況",
-+            "cursorUsageMenu": "Cursor の使用状況",
 +            "qwenCloudUsageMenu": "Qwen Cloud の使用状況",
              "floatingTerminalNewActivity": "{{label}}、新規アクティビティ",
+             "4fba7dc1e7": "残高 {{value0}}",
              "codexSignInSuccess": "Codex にサインインしました",
--            "codexSignInError": "Codex のサインインに失敗しました。もう一度お試しください。",
--            "cursorUsageMenu": "Cursor の使用状況"
-+            "codexSignInError": "Codex のサインインに失敗しました。もう一度お試しください。"
-           },
-           "StatusBarUsageEmptyCta": {
-             "828c764a79": "アカウントを接続する",
-@@ -3809,8 +3811,6 @@
+@@ -3851,8 +3853,6 @@
              "2c35eca8d4": "使用状況を取得できません",
              "1292d4f2ee": "利用不可",
              "7567cd1c6b": "使用量を取得できません",
@@ -3273,7 +3671,7 @@ index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d7
              "e740f92596": "更新に失敗しました",
              "8418ec448d": "{{value0}} の使用状況を更新できませんでした。Agent セッションは引き続きサインイン済みの場合があります。",
              "45198c7d95": "レート制限リセットが 1 回利用可能",
-@@ -3819,12 +3819,10 @@
+@@ -3861,12 +3861,10 @@
              "d1e442a9e5": "今期限切れ",
              "6cf9eaed10": "次は {{value0}} 後に期限切れ",
              "20ad66aed1": "{{value0}} 後に期限切れ",
@@ -3286,7 +3684,7 @@ index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d7
              "42fdd4da1d": "Claude サインインを更新中です。Agent セッションはまだサインイン済みの場合があります。",
              "c06c1d215d": "ネットワークリクエストに失敗したため、Claude 使用量を更新できませんでした。",
              "cabdc2a9e0": "Claude サインイン認証情報を読み取れませんでした。",
-@@ -3833,6 +3831,20 @@
+@@ -3875,6 +3873,20 @@
              "d1b7f509ac": "Orca を実行しているコンピュータのターミナルで grok を実行し、起動するまで待ってください。サインインを求められた場合は完了してから、使用状況を再取得してください。チャットメッセージを送る必要はありません。",
              "f90b3d7a16": "Kimi を実行して更新",
              "a37e8c15d4": "Orca を実行しているコンピュータのターミナルで kimi を実行し、起動するまで待ってから、使用状況を再取得してください。",
@@ -3307,12 +3705,12 @@ index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d7
              "minimax": {
                "expired": {
                  "label": "サインインの有効期限が切れました",
-@@ -3880,7 +3892,14 @@
+@@ -3925,7 +3937,14 @@
              "compact": "コンパクト",
              "footerDetailAria": "使用量フッターの詳細",
              "detailedTooltip": "バー・ラベル・パーセントを含む完全な使用状況",
--            "compactTooltip": "凝縮された使用状況: 最も狭いウィンドウのみ"
-+            "compactTooltip": "凝縮された使用状況: 最も狭いウィンドウのみ",
+-            "compactTooltip": "簡潔な使用状況：プロバイダーごとに1つの概要"
++            "compactTooltip": "簡潔な使用状況：プロバイダーごとに1つの概要",
 +            "stale": {
 +              "noSample": "以前の計測なし",
 +              "justRead": "たった今取得",
@@ -3323,7 +3721,7 @@ index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d7
            },
            "RemoteServerUpdateStatusSegment": {
              "updating": "{{value0}}/{{value1}}を更新中",
-@@ -9171,6 +9190,11 @@
+@@ -9268,6 +9287,11 @@
              "e7d1b0f3a5": "Grok CLI OAuth から Grok の週次クレジット使用量を表示します。",
              "d6c0a9e2f4": "grok",
              "c5b9f8d1e3": "xai",
@@ -3336,10 +3734,10 @@ index f3e2e0f082b0d2eb04973beee08f24f7a2a9b336..7b19b42df2660d262c8a1bfe617955d7
              "usagePercentageDisplayDescription": "プロバイダーの制限を使用済みまたは残りの割合で表示するかを選択します。",
              "tray": {
 diff --git a/src/renderer/src/i18n/locales/ko.json b/src/renderer/src/i18n/locales/ko.json
-index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7e9d08230 100644
+index d9827f023364eafe23f14effbb2ea3bff8639c65..f0847dfa90a6b0393e26c5a7aaf23d455c7dfa34 100644
 --- a/src/renderer/src/i18n/locales/ko.json
 +++ b/src/renderer/src/i18n/locales/ko.json
-@@ -3809,8 +3809,6 @@
+@@ -3851,8 +3851,6 @@
              "2c35eca8d4": "사용량을 가져올 수 없습니다.",
              "1292d4f2ee": "사용할 수 없음",
              "7567cd1c6b": "사용량을 확인할 수 없음",
@@ -3348,7 +3746,7 @@ index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7
              "e740f92596": "새로 고침 실패",
              "8418ec448d": "{{value0}} 사용량을 새로 고칠 수 없습니다. Agent 세션은 여전히 로그인되어 있을 수 있습니다.",
              "45198c7d95": "rate-limit 재설정 1회 사용 가능",
-@@ -3819,12 +3817,10 @@
+@@ -3861,12 +3859,10 @@
              "d1e442a9e5": "지금 만료됨",
              "6cf9eaed10": "다음 항목이 {{value0}} 후 만료됨",
              "20ad66aed1": "{{value0}} 후 만료됨",
@@ -3361,7 +3759,7 @@ index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7
              "42fdd4da1d": "Claude 로그인을 새로 고치는 중입니다. 에이전트 세션은 여전히 로그인되어 있을 수 있습니다.",
              "c06c1d215d": "네트워크 요청 실패로 Claude 사용량을 새로 고칠 수 없습니다.",
              "cabdc2a9e0": "Claude 로그인 자격 증명을 읽을 수 없습니다.",
-@@ -3833,6 +3829,20 @@
+@@ -3875,6 +3871,20 @@
              "d1b7f509ac": "Run grok in a terminal on the computer running Orca and wait for it to start. If prompted, complete sign-in, then retry usage. You do not need to send a chat message.",
              "f90b3d7a16": "Run Kimi to refresh",
              "a37e8c15d4": "Run kimi in a terminal on the computer running Orca and wait for it to start, then retry usage.",
@@ -3382,12 +3780,12 @@ index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7
              "minimax": {
                "expired": {
                  "label": "로그인이 만료되었습니다",
-@@ -3880,7 +3890,14 @@
+@@ -3925,7 +3935,14 @@
              "compact": "압축",
              "footerDetailAria": "사용량 푸터 세부 정보",
              "detailedTooltip": "막대, 레이블, 백분율을 포함한 전체 사용량",
--            "compactTooltip": "압축된 사용: 가장 좁은 창만 사용"
-+            "compactTooltip": "압축된 사용: 가장 좁은 창만 사용",
+-            "compactTooltip": "간략한 사용량: 제공자별 요약 하나"
++            "compactTooltip": "간략한 사용량: 제공자별 요약 하나",
 +            "stale": {
 +              "noSample": "이전 측정값 없음",
 +              "justRead": "방금 읽음",
@@ -3399,10 +3797,10 @@ index b3c26d91cc133c3a42c7f7fd6166740de1a37eac..faed1c224f0f2b50ebee5c57b42fb3f7
            "RemoteServerUpdateStatusSegment": {
              "updating": "{{value0}}/{{value1}} 업데이트 중",
 diff --git a/src/renderer/src/i18n/locales/zh.json b/src/renderer/src/i18n/locales/zh.json
-index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba20f4e9f9a 100644
+index 795419d9a842187815a4e79d994532340c0c2dea..1cff6ba48af2bf2430162852c176331659cd4852 100644
 --- a/src/renderer/src/i18n/locales/zh.json
 +++ b/src/renderer/src/i18n/locales/zh.json
-@@ -3809,8 +3809,6 @@
+@@ -3851,8 +3851,6 @@
              "2c35eca8d4": "无法获取使用情况",
              "1292d4f2ee": "不可用",
              "7567cd1c6b": "无法使用",
@@ -3411,7 +3809,7 @@ index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba2
              "e740f92596": "刷新失败",
              "8418ec448d": "{{value0}} 用量无法刷新。智能体会话可能仍处于登录状态。",
              "45198c7d95": "1 次速率限制重置可用",
-@@ -3819,12 +3817,10 @@
+@@ -3861,12 +3859,10 @@
              "d1e442a9e5": "现在过期",
              "6cf9eaed10": "下一个将在 {{value0}} 后过期",
              "20ad66aed1": "将在 {{value0}} 后过期",
@@ -3424,7 +3822,7 @@ index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba2
              "42fdd4da1d": "正在刷新 Claude 登录。智能体会话可能仍处于登录状态。",
              "c06c1d215d": "由于网络请求失败，无法刷新 Claude 用量。",
              "cabdc2a9e0": "无法读取 Claude 登录凭据。",
-@@ -3833,6 +3829,20 @@
+@@ -3875,6 +3871,20 @@
              "d1b7f509ac": "在运行 Orca 的电脑上的终端中运行 grok，并等待其启动。如有提示，请完成登录，然后重试用量检查。您无需发送聊天消息。",
              "f90b3d7a16": "运行 Kimi 以刷新",
              "a37e8c15d4": "在运行 Orca 的电脑上的终端中运行 kimi，等待其启动，然后重试用量检查。",
@@ -3445,12 +3843,12 @@ index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba2
              "minimax": {
                "expired": {
                  "label": "登录已过期",
-@@ -3880,7 +3890,14 @@
+@@ -3925,7 +3935,14 @@
              "compact": "精简",
              "footerDetailAria": "使用情况页脚详情",
              "detailedTooltip": "完整使用情况，包含条形图、标签和百分比",
--            "compactTooltip": "精简使用情况：仅显示最吃紧的窗口"
-+            "compactTooltip": "精简使用情况：仅显示最吃紧的窗口",
+-            "compactTooltip": "精简使用情况：每个提供方显示一项汇总"
++            "compactTooltip": "精简使用情况：每个提供方显示一项汇总",
 +            "stale": {
 +              "noSample": "没有更早的读数",
 +              "justRead": "刚刚读取",
@@ -3462,49 +3860,50 @@ index a5652bc21417207126ed34bd4928c76bae388ebd..aaead3a5431a7fccc9d8fcfd5aa83ba2
            "RemoteServerUpdateStatusSegment": {
              "updating": "Updating {{value0}}/{{value1}}",
 diff --git a/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts b/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
-index 0a380a0625a1a7e7eb109e9c0dda7d80894f8ebd..b6d780465a9b6297bbdc965229fb56f53c32461d 100644
+index 815ae36b523ef9fb77a159fcf78434f8814788dc..9591e2e9d7254d7b5478102e713da3a060bee797 100644
 --- a/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
 +++ b/src/renderer/src/store/slices/ui-hydration-workspace-preferences.test.ts
-@@ -140,7 +140,8 @@ describe('createUISlice hydratePersistedUI', () => {
-       'minimax',
+@@ -141,7 +141,8 @@ describe('createUISlice hydratePersistedUI', () => {
        'antigravity',
        'grok',
--      'cursor'
-+      'cursor',
+       'cursor',
+-      'zcode'
++      'zcode',
 +      'qwencloud'
      ])
      expect(setUI).toHaveBeenCalledWith({
        statusBarItems: [
-@@ -151,14 +152,16 @@ describe('createUISlice hydratePersistedUI', () => {
-         'minimax',
+@@ -153,7 +154,8 @@ describe('createUISlice hydratePersistedUI', () => {
          'antigravity',
          'grok',
--        'cursor'
-+        'cursor',
+         'cursor',
+-        'zcode'
++        'zcode',
 +        'qwencloud'
        ],
        _portsStatusBarDefaultAdded: true,
        _kimiStatusBarDefaultAdded: true,
-       _minimaxStatusBarDefaultAdded: true,
+@@ -161,7 +163,8 @@ describe('createUISlice hydratePersistedUI', () => {
        _antigravityStatusBarDefaultAdded: true,
        _grokStatusBarDefaultAdded: true,
--      _cursorStatusBarDefaultAdded: true
-+      _cursorStatusBarDefaultAdded: true,
+       _cursorStatusBarDefaultAdded: true,
+-      _zcodeStatusBarDefaultAdded: true
++      _zcodeStatusBarDefaultAdded: true,
 +      _codexBarStatusBarDefaultAdded: true
      })
    })
  
-@@ -175,7 +178,8 @@ describe('createUISlice hydratePersistedUI', () => {
-         _minimaxStatusBarDefaultAdded: true,
+@@ -179,7 +182,8 @@ describe('createUISlice hydratePersistedUI', () => {
          _antigravityStatusBarDefaultAdded: true,
          _grokStatusBarDefaultAdded: true,
--        _cursorStatusBarDefaultAdded: true
-+        _cursorStatusBarDefaultAdded: true,
+         _cursorStatusBarDefaultAdded: true,
+-        _zcodeStatusBarDefaultAdded: true
++        _zcodeStatusBarDefaultAdded: true,
 +        _codexBarStatusBarDefaultAdded: true
        })
      )
  
-@@ -183,6 +187,26 @@ describe('createUISlice hydratePersistedUI', () => {
+@@ -187,6 +191,28 @@ describe('createUISlice hydratePersistedUI', () => {
      expect(setUI).not.toHaveBeenCalled()
    })
  
@@ -3521,6 +3920,8 @@ index 0a380a0625a1a7e7eb109e9c0dda7d80894f8ebd..b6d780465a9b6297bbdc965229fb56f5
 +        _minimaxStatusBarDefaultAdded: true,
 +        _antigravityStatusBarDefaultAdded: true,
 +        _grokStatusBarDefaultAdded: true,
++        _cursorStatusBarDefaultAdded: true,
++        _zcodeStatusBarDefaultAdded: true,
 +        _codexBarStatusBarDefaultAdded: true
 +      })
 +    )
@@ -3532,10 +3933,10 @@ index 0a380a0625a1a7e7eb109e9c0dda7d80894f8ebd..b6d780465a9b6297bbdc965229fb56f5
      const setUI = vi.fn().mockResolvedValue(undefined)
      vi.stubGlobal('window', { api: { ui: { set: setUI } } })
 diff --git a/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts b/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
-index 9737a575f06335d1f4deb356eb0f48be990005e1..f580b8169cd2c131cebc3dd8235dc8e1f1561a19 100644
+index 7617b66f3f8e92056d219fe05ace99c4150ee195..d6b354ab8039dce0d2ef106be5e45ae172aa7433 100644
 --- a/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
 +++ b/src/renderer/src/store/slices/ui/ui-slice-hydration-sanitizers.ts
-@@ -227,16 +227,37 @@ export function presetToQuery(presetId: TaskViewPresetId | null): string {
+@@ -228,16 +228,38 @@ export function presetToQuery(presetId: TaskViewPresetId | null): string {
    }
  }
  
@@ -3550,6 +3951,7 @@ index 9737a575f06335d1f4deb356eb0f48be990005e1..f580b8169cd2c131cebc3dd8235dc8e1
 +  minimax: true,
 +  grok: true,
 +  cursor: true,
++  zcode: true,
 +  qwencloud: true,
 +  ssh: true,
 +  'resource-usage': true,
@@ -3577,10 +3979,10 @@ index 9737a575f06335d1f4deb356eb0f48be990005e1..f580b8169cd2c131cebc3dd8235dc8e1
  
  export function hydrateUnexpectedSignoutDismissal(
 diff --git a/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts b/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
-index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a453a52166c 100644
+index 26b6071d64ddb8a5dad4f494f5edb972fcab308a..da4b9536c0214dc00ff5a3208b9fdef35d1828e0 100644
 --- a/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
 +++ b/src/renderer/src/store/slices/ui/ui-slice-hydration-status-bar-items.ts
-@@ -2,31 +2,36 @@ import type { PersistedUIState } from '../../../../../shared/persisted-ui-state-
+@@ -2,33 +2,37 @@ import type { PersistedUIState } from '../../../../../shared/persisted-ui-state-
  import type { StatusBarItem } from '../../../../../shared/ui-chrome-types'
  import { migrateStatusBarItems } from './ui-slice-hydration-sanitizers'
  
@@ -3590,6 +3992,7 @@ index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a45
 -const DEFAULT_ON_ANTIGRAVITY_STATUS_BAR_ITEM: StatusBarItem = 'antigravity'
 -const DEFAULT_ON_GROK_STATUS_BAR_ITEM: StatusBarItem = 'grok'
 -const DEFAULT_ON_CURSOR_STATUS_BAR_ITEM: StatusBarItem = 'cursor'
+-const DEFAULT_ON_ZCODE_STATUS_BAR_ITEM: StatusBarItem = 'zcode'
 +// Why: a one-shot flag per rollout adds its items to an existing bar once, so a user who later hides one stays hidden.
 +const DEFAULT_ON_STATUS_BAR_ITEMS = [
 +  ['_portsStatusBarDefaultAdded', ['ports']],
@@ -3598,6 +4001,7 @@ index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a45
 +  ['_antigravityStatusBarDefaultAdded', ['antigravity']],
 +  ['_grokStatusBarDefaultAdded', ['grok']],
 +  ['_cursorStatusBarDefaultAdded', ['cursor']],
++  ['_zcodeStatusBarDefaultAdded', ['zcode']],
 +  // Why: CodexBar-metered providers share one durable signal (the codexbar binary), hence one flag.
 +  ['_codexBarStatusBarDefaultAdded', ['qwencloud']]
 +] as const satisfies readonly (readonly [keyof PersistedUIState, readonly StatusBarItem[]])[]
@@ -3610,7 +4014,8 @@ index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a45
 -    ['_minimaxStatusBarDefaultAdded', DEFAULT_ON_MINIMAX_STATUS_BAR_ITEM],
 -    ['_antigravityStatusBarDefaultAdded', DEFAULT_ON_ANTIGRAVITY_STATUS_BAR_ITEM],
 -    ['_grokStatusBarDefaultAdded', DEFAULT_ON_GROK_STATUS_BAR_ITEM],
--    ['_cursorStatusBarDefaultAdded', DEFAULT_ON_CURSOR_STATUS_BAR_ITEM]
+-    ['_cursorStatusBarDefaultAdded', DEFAULT_ON_CURSOR_STATUS_BAR_ITEM],
+-    ['_zcodeStatusBarDefaultAdded', DEFAULT_ON_ZCODE_STATUS_BAR_ITEM]
 -  ] as const
 -  for (const [flag, item] of defaults) {
 -    if (!ui[flag] && !items.includes(item)) {
@@ -3637,10 +4042,10 @@ index 47c770804c231526c47b6616cac9db7a205d5dd5..9f2292cf43638262f343ede14aa57a45
    }
    return items
 diff --git a/src/shared/constants.ts b/src/shared/constants.ts
-index aa919cdec38536f1379931146222ead0e865e715..5263c788229e49591b8b11721d83c2daa1d43ed2 100644
+index f26fe093676c4417191ed4c1a2f1563e748dc70f..bde89f7c9e6a68f51235a76d2e136f3a1b02fe37 100644
 --- a/src/shared/constants.ts
 +++ b/src/shared/constants.ts
-@@ -198,10 +198,7 @@ export function getDefaultRepoHookSettings(): RepoHookSettings {
+@@ -144,10 +144,7 @@ export function getDefaultRepoHookSettings(): RepoHookSettings {
      mode: 'auto',
      setupRunPolicy: 'run-by-default',
      setupAgentStartupPolicy: DEFAULT_SETUP_AGENT_STARTUP_POLICY,
@@ -3652,7 +4057,7 @@ index aa919cdec38536f1379931146222ead0e865e715..5263c788229e49591b8b11721d83c2da
    }
  }
  
-@@ -230,6 +227,7 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
+@@ -176,6 +173,7 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
      sshRemotePtyLeases: [],
      sshPtyConsumerRecoveries: [],
      claudeLivePtySessionIds: [],
@@ -3692,10 +4097,10 @@ index a081eee76ab3f98a1abf5a650dfc9c230ac6cf14..260ef6615f1723700d272e8b687b0772
    legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
    automations: Automation[]
 diff --git a/src/shared/persisted-ui-state-types.ts b/src/shared/persisted-ui-state-types.ts
-index 6b1f20b58b2af0907dae6ce5a457aabb31b073be..7fafe4def38299a697386b83630f22eb98d16d34 100644
+index 6eaa295eed4c6674ba89e1a06c3ca57eacb69e39..0e5849a1bd7595753342d0acc3a3d59b26e26c69 100644
 --- a/src/shared/persisted-ui-state-types.ts
 +++ b/src/shared/persisted-ui-state-types.ts
-@@ -118,6 +118,8 @@ export type PersistedUIState = {
+@@ -120,6 +120,8 @@ export type PersistedUIState = {
    _antigravityStatusBarDefaultAdded?: boolean
    /** One-shot migration flag for adding the default-on Grok status item. */
    _grokStatusBarDefaultAdded?: boolean
@@ -3703,57 +4108,57 @@ index 6b1f20b58b2af0907dae6ce5a457aabb31b073be..7fafe4def38299a697386b83630f22eb
 +  _codexBarStatusBarDefaultAdded?: boolean
    /** One-shot migration flag for adding the default-on Cursor status item. */
    _cursorStatusBarDefaultAdded?: boolean
-   statusBarItems: StatusBarItem[]
+   /** One-shot migration flag for adding the default-on ZCode status item. */
 diff --git a/src/shared/rpc-contract/client-ui-params.ts b/src/shared/rpc-contract/client-ui-params.ts
-index b78a984889e429de310c0895974f65a919ce682f..59aa3b90ec4aa233f6203d73864f2626972c3f2a 100644
+index 0295247a2e88673ce136d481b5ce3035fa4a27c7..3530cfcbca8fe47119a3d0d5bb3e49ed5c572924 100644
 --- a/src/shared/rpc-contract/client-ui-params.ts
 +++ b/src/shared/rpc-contract/client-ui-params.ts
-@@ -70,6 +70,7 @@ export const StatusBarItem = z.enum([
-   'minimax',
+@@ -71,6 +71,7 @@ export const StatusBarItem = z.enum([
    'grok',
    'cursor',
+   'zcode',
 +  'qwencloud',
    'ssh',
    'resource-usage',
    'ports'
-@@ -183,6 +184,7 @@ export const UiUpdateFields = z
+@@ -185,6 +186,7 @@ export const UiUpdateFields = z
      _minimaxStatusBarDefaultAdded: z.boolean().optional(),
      _antigravityStatusBarDefaultAdded: z.boolean().optional(),
      _grokStatusBarDefaultAdded: z.boolean().optional(),
 +    _codexBarStatusBarDefaultAdded: z.boolean().optional(),
      _cursorStatusBarDefaultAdded: z.boolean().optional(),
+     _zcodeStatusBarDefaultAdded: z.boolean().optional(),
      statusBarVisible: z.boolean().optional(),
-     usagePercentageDisplay: z.enum(['used', 'remaining']).optional(),
 diff --git a/src/shared/status-bar-defaults.ts b/src/shared/status-bar-defaults.ts
-index 2eb855d9dd5c86c7d5647e5a3a8a4de27ba162c1..80af3937b52bbe2d24b06276a8383c3fdb4a23a1 100644
+index c32958ee9491710bd923011dae3b93a022c8f6bc..367a821b1602b28360f8f62f4bbb590f0f85b6d6 100644
 --- a/src/shared/status-bar-defaults.ts
 +++ b/src/shared/status-bar-defaults.ts
-@@ -10,6 +10,7 @@ export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
-   'minimax',
+@@ -11,6 +11,7 @@ export const DEFAULT_STATUS_BAR_ITEMS: StatusBarItem[] = [
    'grok',
    'cursor',
+   'zcode',
 +  'qwencloud',
    'ssh',
    'resource-usage',
    'ports'
 diff --git a/src/shared/ui-chrome-types.ts b/src/shared/ui-chrome-types.ts
-index d9aee820949ecf32e7d5f29172952f1ecef9993a..37fa8c1f4e76f9e2c0ab3cda42f650301df76154 100644
+index 2e7557bb5920191a5a7595f9d2d7af2c14f288da..944ea98a709c257c056fd6bc28ecbf407bbb9331 100644
 --- a/src/shared/ui-chrome-types.ts
 +++ b/src/shared/ui-chrome-types.ts
-@@ -63,6 +63,7 @@ export type StatusBarItem =
-   | 'minimax'
+@@ -66,6 +66,7 @@ export type StatusBarItem =
    | 'grok'
    | 'cursor'
+   | 'zcode'
 +  | 'qwencloud'
    | 'ssh'
    | 'resource-usage'
    | 'ports'
 diff --git a/tests/e2e/status-bar-provider-account-meters.spec.ts b/tests/e2e/status-bar-provider-account-meters.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507ecfca057e
+index 0000000000000000000000000000000000000000..baa83b9e21064623c52eb50c4c77a6aff7f45b04
 --- /dev/null
 +++ b/tests/e2e/status-bar-provider-account-meters.spec.ts
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,559 @@
 +import { test, expect } from './helpers/orca-app'
 +import { waitForSessionReady } from './helpers/store'
 +
@@ -4048,15 +4453,22 @@ index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507e
 +const SEGMENT_LINE_MAX_PX = 20
 +// Matches the `max-w-[72px]` bound on the bar's status label, plus subpixel headroom.
 +const STATUS_LABEL_MAX_PX = 74
++// Upstream picks the bar's density from measured widths. At 1568px this roster and the default
++// right-side segments are ~170px too wide for labels, so the bar settles compact; at 2560px
++// labels fit with ~800px to spare, whatever the platform's text rendering.
++const WINDOW_PX = 1568
++const ROOMY_WINDOW_PX = 2560
 +
 +/**
-+ * Proves the densest realistic roster stays on one line in a verbose locale: seven lanes — two
-+ * Claude accounts and Qwen all failing with no cached window, plus two Codex accounts, Grok
-+ * and Cursor still reporting — rendered in French at a real 1568px window.
++ * Proves the densest realistic roster stays on one line in a verbose locale with every failing
++ * lane marked: seven lanes — two Claude accounts and Qwen all failing with no cached window, plus
++ * two Codex accounts, Grok and Cursor still reporting — rendered in French.
 + *
 + * Why this fixture: French status copy ("En attente du renouvellement des identifiants") is four
-+ * times the English "Refresh failed", and the bar's label had no width bound, so the flex row
-+ * reflowed it and pushed every meter onto extra lines.
++ * times the English "Refresh failed". Unbounded, it once wrapped the bar onto extra lines.
++ *
++ * At a real 1568px window the bar is compact: labels drop and each failing lane's warning mark
++ * carries its reason on hover. At 2560px the label is back, bounded and ellipsized.
 + *
 + * Safety: every account, snapshot and failure is injected into the renderer store. The spec reads
 + * no keychain and contacts no provider — there are no real credentials anywhere in it.
@@ -4065,12 +4477,15 @@ index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507e
 +  electronApp,
 +  orcaPage
 +}, testInfo) => {
-+  // Why: compact kicks in under 900px of *status-bar* width. Pin both the Chromium
-+  // viewport and the BrowserWindow so the ResizeObserver sees a real 1568px bar.
-+  await orcaPage.setViewportSize({ width: 1568, height: 900 })
-+  await electronApp.evaluate(({ BrowserWindow }) => {
-+    BrowserWindow.getAllWindows()[0]?.setSize(1568, 900)
-+  })
++  // Why: pin both the Chromium viewport and the BrowserWindow so the density hook's
++  // ResizeObserver measures a real bar of that width.
++  const resizeWindow = async (width: number): Promise<void> => {
++    await orcaPage.setViewportSize({ width, height: 900 })
++    await electronApp.evaluate(({ BrowserWindow }, windowWidth) => {
++      BrowserWindow.getAllWindows()[0]?.setSize(windowWidth, 900)
++    }, width)
++  }
++  await resizeWindow(WINDOW_PX)
 +  await waitForSessionReady(orcaPage)
 +
 +  await orcaPage.evaluate(() => window.__store!.getState().updateSettings({ uiLanguage: 'fr' }))
@@ -4125,7 +4540,18 @@ index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507e
 +    })
 +    store.setState({
 +      detectedAgentIds: ['claude', 'codex', 'grok'],
-+      statusBarItems: ['claude', 'codex', 'grok', 'cursor', 'qwencloud'],
++      // Why: keep the default right-side segments. Main's next UI broadcast re-hydrates the
++      // persisted list, so dropping them here only did so until mid-assertion.
++      statusBarItems: [
++        'claude',
++        'codex',
++        'grok',
++        'cursor',
++        'qwencloud',
++        'ssh',
++        'resource-usage',
++        'ports'
++      ],
 +      statusBarUsageMode: 'verbose',
 +      settings: {
 +        ...previous.settings,
@@ -4224,36 +4650,56 @@ index 0000000000000000000000000000000000000000..80de2292462d943e2095ac8b18ce507e
 +
 +  // The regression in one number: the row's own height. A wrapped label made the trigger taller
 +  // than the bar it lives in.
-+  await expect
-+    .poll(async () => (await usageTrigger.boundingBox())?.height ?? Number.POSITIVE_INFINITY, {
-+      message: 'the usage cluster is taller than one status-bar row (labels are wrapping)'
-+    })
-+    .toBeLessThanOrEqual(STATUS_BAR_ROW_MAX_PX)
++  const expectOneLine = async (windowWidth: number): Promise<void> => {
++    await expect
++      .poll(async () => (await usageTrigger.boundingBox())?.height ?? Number.POSITIVE_INFINITY, {
++        message: 'the usage cluster is taller than one status-bar row (labels are wrapping)'
++      })
++      .toBeLessThanOrEqual(STATUS_BAR_ROW_MAX_PX)
 +
-+  const triggerBox = (await usageTrigger.boundingBox())!
-+  const segmentBoxes = await segments.evaluateAll((nodes) =>
-+    nodes.map((node) => {
-+      const box = node.getBoundingClientRect()
-+      return { top: box.top, bottom: box.bottom, right: box.right, height: box.height }
-+    })
-+  )
++    const triggerBox = (await usageTrigger.boundingBox())!
++    const segmentBoxes = await segments.evaluateAll((nodes) =>
++      nodes.map((node) => {
++        const box = node.getBoundingClientRect()
++        return { top: box.top, bottom: box.bottom, right: box.right, height: box.height }
++      })
++    )
 +
-+  for (const box of segmentBoxes) {
-+    // Each lane is one line…
-+    expect(box.height).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
-+    // …all lanes share that line…
-+    expect(Math.abs(box.top - triggerBox.y)).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
-+    expect(box.bottom).toBeLessThanOrEqual(triggerBox.y + triggerBox.height + 1)
-+    // …and none of them runs off the window instead of wrapping.
-+    expect(box.right).toBeLessThanOrEqual(1568)
++    for (const box of segmentBoxes) {
++      // Each lane is one line…
++      expect(box.height).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
++      // …all lanes share that line…
++      expect(Math.abs(box.top - triggerBox.y)).toBeLessThanOrEqual(SEGMENT_LINE_MAX_PX)
++      expect(box.bottom).toBeLessThanOrEqual(triggerBox.y + triggerBox.height + 1)
++      // …and none of them runs off the window instead of wrapping.
++      expect(box.right).toBeLessThanOrEqual(windowWidth)
++    }
++  }
++  await expectOneLine(WINDOW_PX)
++
++  // Every failing lane stays marked with its reason on hover, wherever the density put it.
++  for (const reason of [FR_DEFERRED_LABEL, FR_RATE_LIMITED_LABEL, FR_REFRESH_FAILED_LABEL]) {
++    await expect(usageTrigger.locator(`[title="${reason}"]`)).toBeVisible()
 +  }
 +
-+  // The long sentence is bounded and ellipsized on the bar, with the full text on hover.
-+  const deferredLabel = usageTrigger.locator(`[title="${FR_DEFERRED_LABEL}"]`)
-+  await expect(deferredLabel).toBeVisible()
-+  expect((await deferredLabel.boundingBox())!.width).toBeLessThanOrEqual(STATUS_LABEL_MAX_PX)
-+
 +  await testInfo.attach('status-bar-dense-french-roster.png', {
++    body: await orcaPage.screenshot(),
++    contentType: 'image/png'
++  })
++
++  // With room to spare the sentence is back on the bar: bounded and ellipsized, in full on hover.
++  await resizeWindow(ROOMY_WINDOW_PX)
++  const deferredLabel = usageTrigger.locator(`[title="${FR_DEFERRED_LABEL}"]`)
++  await expect(deferredLabel).toHaveText(FR_DEFERRED_LABEL)
++  await expectOneLine(ROOMY_WINDOW_PX)
++  const label = await deferredLabel.evaluate((node) => ({
++    width: node.getBoundingClientRect().width,
++    ellipsized: node.scrollWidth > node.clientWidth
++  }))
++  expect(label.width).toBeLessThanOrEqual(STATUS_LABEL_MAX_PX)
++  expect(label.ellipsized).toBe(true)
++
++  await testInfo.attach('status-bar-dense-french-roster-roomy.png', {
 +    body: await orcaPage.screenshot(),
 +    contentType: 'image/png'
 +  })

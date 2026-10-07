@@ -3,7 +3,7 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: refresh managed account usage independently
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
 diff --git a/src/main/ipc/rate-limits.ts b/src/main/ipc/rate-limits.ts
@@ -740,20 +740,20 @@ index 1ccb1471de6155f09196fb69a86ca3b2ed3ca769..aaa1d8ffbe15b68194bed2d90bb8b9c4
      return null
    }
 diff --git a/src/main/rate-limits/claude-oauth-usage-request.ts b/src/main/rate-limits/claude-oauth-usage-request.ts
-index 9565a064514ef29b51f3977f61aaa846026a3d7d..423466b09e26c2769a6d361314373d32dadf0800 100644
+index b3bca9298aae8a198ab7c4f8bcfa01e2b0fbc4eb..ec96452fc97e45028c97928d5333089a51100605 100644
 --- a/src/main/rate-limits/claude-oauth-usage-request.ts
 +++ b/src/main/rate-limits/claude-oauth-usage-request.ts
-@@ -4,6 +4,9 @@ import { ensureElectronProxyFromEnvironment } from '../network/proxy-settings'
- import { createOAuthUsageError } from './claude-oauth-usage-error'
- import { mapClaudeUsageWindow, type ClaudeUsageWindowInput } from './claude-usage-window'
- import { abortedClaudeRateLimitResult } from './claude-usage-result'
+@@ -9,6 +9,9 @@ import {
+   type ClaudeOAuthExtraUsage,
+   type ClaudeOAuthSpend
+ } from './claude-usage-credits'
 +import { logClaudeAuthDiagnostic } from './claude-auth-diagnostics-log'
 +import { OAuthUsageError } from './claude-oauth-usage-error'
 +import { takeClaudeUsagePollBudget } from './claude-usage-poll-budget'
  
  const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
  const API_TIMEOUT_MS = 10_000
-@@ -54,14 +57,29 @@ function mapFableWeeklyWindow(data: OAuthUsageResponse): RateLimitWindow | null
+@@ -61,14 +64,29 @@ function mapFableWeeklyWindow(data: OAuthUsageResponse): RateLimitWindow | null
  
  export async function fetchClaudeOAuthUsage(
    token: string,
@@ -786,7 +786,7 @@ index 9565a064514ef29b51f3977f61aaa846026a3d7d..423466b09e26c2769a6d361314373d32
    }
  
    const requestSignal = signal
-@@ -78,12 +96,16 @@ export async function fetchClaudeOAuthUsage(
+@@ -85,12 +103,16 @@ export async function fetchClaudeOAuthUsage(
        signal: requestSignal
      })
      if (!response.ok) {
@@ -804,8 +804,8 @@ index 9565a064514ef29b51f3977f61aaa846026a3d7d..423466b09e26c2769a6d361314373d32
      }
      return {
        provider: 'claude',
-@@ -92,11 +114,12 @@ export async function fetchClaudeOAuthUsage(
-       fableWeekly: mapFableWeeklyWindow(data),
+@@ -100,11 +122,12 @@ export async function fetchClaudeOAuthUsage(
+       extraUsage: mapClaudeExtraUsage(data),
        updatedAt: Date.now(),
        error: null,
 -      status: 'ok'
@@ -1000,7 +1000,7 @@ index 0000000000000000000000000000000000000000..8e9c68ca0b34715fd508059777282e4d
 +  callTimesByToken.clear()
 +}
 diff --git a/src/main/rate-limits/claude-usage-result.ts b/src/main/rate-limits/claude-usage-result.ts
-index aea522e673bf425a850251a8b58492e79db2ac6c..944f99cc327e0cd0538117a9b3420567cf075eae 100644
+index a29cb38d4aad6642b37dd27ec31ca4d9ccdea16a..50c87ddfd31964f78d6786cec8ba91ad3d8a0d45 100644
 --- a/src/main/rate-limits/claude-usage-result.ts
 +++ b/src/main/rate-limits/claude-usage-result.ts
 @@ -12,17 +12,30 @@ export type ClaudeUsageAttemptState = {
@@ -1055,10 +1055,10 @@ index aea522e673bf425a850251a8b58492e79db2ac6c..944f99cc327e0cd0538117a9b3420567
      retryAtMs: input.retryAtMs
    }
 diff --git a/src/main/rate-limits/service-account-target-selection.test.ts b/src/main/rate-limits/service-account-target-selection.test.ts
-index 2deeadfcdaad1f3d0b8cd80f585fa44c388c54a9..eaa8d74ee719224d3a54418fb01adedc90469b76 100644
+index 27e93208c1a1296d65b5df2e2372c57ae97106a6..12fdbb9e13150a8699f66b915b68442952bdab11 100644
 --- a/src/main/rate-limits/service-account-target-selection.test.ts
 +++ b/src/main/rate-limits/service-account-target-selection.test.ts
-@@ -40,6 +40,11 @@ vi.mock('./grok-fetcher', () => ({
+@@ -48,6 +48,11 @@ vi.mock('./grok-fetcher', () => ({
    fetchGrokRateLimits: vi.fn()
  }))
  
@@ -1071,11 +1071,11 @@ index 2deeadfcdaad1f3d0b8cd80f585fa44c388c54a9..eaa8d74ee719224d3a54418fb01adedc
    fetchCursorRateLimits: vi.fn()
  }))
 diff --git a/src/main/rate-limits/service-antigravity-usage.test.ts b/src/main/rate-limits/service-antigravity-usage.test.ts
-index 9f2fc2c8244cb22c926b78914162dab8e64af682..b2867e4f65f44861aa776fede613663466028183 100644
+index 8e65e53740be0f406e7722a80e5f3e8d3decf22f..adf076c5d63862d3d242f62fda863c32f478b446 100644
 --- a/src/main/rate-limits/service-antigravity-usage.test.ts
 +++ b/src/main/rate-limits/service-antigravity-usage.test.ts
-@@ -39,6 +39,11 @@ vi.mock('./grok-fetcher', () => ({
-   fetchGrokRateLimits: vi.fn()
+@@ -46,6 +46,11 @@ vi.mock('./antigravity-usage-fetcher', () => ({
+   fetchAntigravityRateLimits: vi.fn()
  }))
  
 +vi.mock('./codexbar-cli-source', () => ({
@@ -1087,11 +1087,11 @@ index 9f2fc2c8244cb22c926b78914162dab8e64af682..b2867e4f65f44861aa776fede6136634
    fetchCursorRateLimits: vi.fn()
  }))
 diff --git a/src/main/rate-limits/service-cursor-usage.test.ts b/src/main/rate-limits/service-cursor-usage.test.ts
-index 37984b89a522b330930d3d33888d83608a8dd389..b5999c62b5555b5fb82e5a944bfa6bcf96e2d565 100644
+index 03f5c1f4a1681b6b431b677a05ec1e951caa9164..99346b69bf463988adb497d3c90240ba59bb2c00 100644
 --- a/src/main/rate-limits/service-cursor-usage.test.ts
 +++ b/src/main/rate-limits/service-cursor-usage.test.ts
-@@ -25,6 +25,10 @@ vi.mock('./grok-fetcher', () => ({ fetchGrokRateLimits: vi.fn() }))
- vi.mock('./grok-auth', () => ({ readGrokAuthSession: vi.fn(() => ({ status: 'missing' })) }))
+@@ -31,6 +31,10 @@ vi.mock('./antigravity-usage-fetcher', () => ({
+ 
  vi.mock('./cursor-fetcher', () => ({ fetchCursorRateLimits: vi.fn() }))
  vi.mock('./cursor-auth', () => ({ readCursorAuthSession: vi.fn() }))
 +vi.mock('./codexbar-cli-source', () => ({
@@ -1102,10 +1102,10 @@ index 37984b89a522b330930d3d33888d83608a8dd389..b5999c62b5555b5fb82e5a944bfa6bcf
  
  type JwtSegment = Record<string, unknown>
 diff --git a/src/main/rate-limits/service-inactive-account-previews.test.ts b/src/main/rate-limits/service-inactive-account-previews.test.ts
-index 300292efcc216da3f1898f8de24cd47ed01be4a9..cb24304e441b78af161b4859572668f5d9c8a2d4 100644
+index cae71c569e71e2ac27592392a030d7bf617af250..8a89a8c2b75a3e49b8a897e53e222c296ebebba0 100644
 --- a/src/main/rate-limits/service-inactive-account-previews.test.ts
 +++ b/src/main/rate-limits/service-inactive-account-previews.test.ts
-@@ -47,6 +47,11 @@ vi.mock('./grok-fetcher', () => ({
+@@ -55,6 +55,11 @@ vi.mock('./grok-fetcher', () => ({
    fetchGrokRateLimits: vi.fn()
  }))
  
@@ -1117,7 +1117,7 @@ index 300292efcc216da3f1898f8de24cd47ed01be4a9..cb24304e441b78af161b4859572668f5
  vi.mock('./cursor-fetcher', () => ({
    fetchCursorRateLimits: vi.fn()
  }))
-@@ -460,4 +465,130 @@ describe('RateLimitService', () => {
+@@ -467,4 +472,130 @@ describe('RateLimitService', () => {
        }
      ])
    })
@@ -1249,7 +1249,7 @@ index 300292efcc216da3f1898f8de24cd47ed01be4a9..cb24304e441b78af161b4859572668f5
 +  })
  })
 diff --git a/src/main/rate-limits/service-live-claude-usage.test.ts b/src/main/rate-limits/service-live-claude-usage.test.ts
-index 3c51a09aa5ff8aea8f3d3d07d25d017dcfcff79b..d444dd8eb24826d607765412ea4b026ccf67398d 100644
+index 8c35ab77acc7f8239718c7198173b3f3c6062e78..1bd2ef88a6373f39624be4179c2b139d45891f09 100644
 --- a/src/main/rate-limits/service-live-claude-usage.test.ts
 +++ b/src/main/rate-limits/service-live-claude-usage.test.ts
 @@ -3,6 +3,7 @@ import type { ProviderRateLimits } from '../../shared/rate-limit-types'
@@ -1260,7 +1260,7 @@ index 3c51a09aa5ff8aea8f3d3d07d25d017dcfcff79b..d444dd8eb24826d607765412ea4b026c
  import {
    asRateLimitWindow,
    deferred,
-@@ -44,6 +45,11 @@ vi.mock('./grok-fetcher', () => ({
+@@ -52,6 +53,11 @@ vi.mock('./grok-fetcher', () => ({
    fetchGrokRateLimits: vi.fn()
  }))
  
@@ -1272,7 +1272,7 @@ index 3c51a09aa5ff8aea8f3d3d07d25d017dcfcff79b..d444dd8eb24826d607765412ea4b026c
  vi.mock('./cursor-fetcher', () => ({
    fetchCursorRateLimits: vi.fn()
  }))
-@@ -516,4 +522,113 @@ describe('RateLimitService', () => {
+@@ -524,4 +530,113 @@ describe('RateLimitService', () => {
        expect(fetchClaudeRateLimits).not.toHaveBeenCalled()
      })
    })
@@ -1387,41 +1387,9 @@ index 3c51a09aa5ff8aea8f3d3d07d25d017dcfcff79b..d444dd8eb24826d607765412ea4b026c
 +  })
  })
 diff --git a/src/main/rate-limits/service-minimax-usage.test.ts b/src/main/rate-limits/service-minimax-usage.test.ts
-index 8b2253364723996fa22baef2c88d449a16c59e1d..ae008aa8f62a9f006a1cfd2c985803a822ab9b63 100644
+index 8f31e9a6da7ae552a05d6c504cd2f29c79ba07a2..bcfc79acbcb1bb1a1c28c50f95775bfedbbf9a19 100644
 --- a/src/main/rate-limits/service-minimax-usage.test.ts
 +++ b/src/main/rate-limits/service-minimax-usage.test.ts
-@@ -41,6 +41,11 @@ vi.mock('./grok-fetcher', () => ({
-   fetchGrokRateLimits: vi.fn()
- }))
- 
-+vi.mock('./codexbar-cli-source', () => ({
-+  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
-+  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
-+}))
-+
- vi.mock('./cursor-fetcher', () => ({
-   fetchCursorRateLimits: vi.fn()
- }))
-diff --git a/src/main/rate-limits/service-refresh-orchestration.test.ts b/src/main/rate-limits/service-refresh-orchestration.test.ts
-index b184d51eda6a54fc462cc3b2c823e2d4bcf27c6b..638507c0546702176040ed4109089ddb7d2231b9 100644
---- a/src/main/rate-limits/service-refresh-orchestration.test.ts
-+++ b/src/main/rate-limits/service-refresh-orchestration.test.ts
-@@ -48,6 +48,11 @@ vi.mock('./grok-fetcher', () => ({
-   fetchGrokRateLimits: vi.fn()
- }))
- 
-+vi.mock('./codexbar-cli-source', () => ({
-+  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
-+  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
-+}))
-+
- vi.mock('./cursor-fetcher', () => ({
-   fetchCursorRateLimits: vi.fn()
- }))
-diff --git a/src/main/rate-limits/service-window-activation.test.ts b/src/main/rate-limits/service-window-activation.test.ts
-index 7c83bd7d026005b3db02d553d2e8c48ce1faeb92..108922f8cb1aa569052f72b60991a8302eb3ee6e 100644
---- a/src/main/rate-limits/service-window-activation.test.ts
-+++ b/src/main/rate-limits/service-window-activation.test.ts
 @@ -49,6 +49,11 @@ vi.mock('./grok-fetcher', () => ({
    fetchGrokRateLimits: vi.fn()
  }))
@@ -1434,12 +1402,44 @@ index 7c83bd7d026005b3db02d553d2e8c48ce1faeb92..108922f8cb1aa569052f72b60991a830
  vi.mock('./cursor-fetcher', () => ({
    fetchCursorRateLimits: vi.fn()
  }))
+diff --git a/src/main/rate-limits/service-refresh-orchestration.test.ts b/src/main/rate-limits/service-refresh-orchestration.test.ts
+index 2cef94ba2b3e7e0525d3d540c89b6efbfd3b2b78..37377a71686e47fce558cd0a0fed21ba49143b59 100644
+--- a/src/main/rate-limits/service-refresh-orchestration.test.ts
++++ b/src/main/rate-limits/service-refresh-orchestration.test.ts
+@@ -57,6 +57,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
+diff --git a/src/main/rate-limits/service-window-activation.test.ts b/src/main/rate-limits/service-window-activation.test.ts
+index 8cbb259150370664d4ad7186565c76b5cedf4cb8..0d9a98095dcf310e3dcfc837ac0e12fe46737efe 100644
+--- a/src/main/rate-limits/service-window-activation.test.ts
++++ b/src/main/rate-limits/service-window-activation.test.ts
+@@ -57,6 +57,11 @@ vi.mock('./grok-fetcher', () => ({
+   fetchGrokRateLimits: vi.fn()
+ }))
+ 
++vi.mock('./codexbar-cli-source', () => ({
++  // Why: the CodexBar batch shells out to a CLI; unit tests must not spawn real processes.
++  fetchCodexBarUsage: vi.fn(async () => ({ binaryPath: null, results: {} }))
++}))
++
+ vi.mock('./cursor-fetcher', () => ({
+   fetchCursorRateLimits: vi.fn()
+ }))
 diff --git a/src/main/rate-limits/service/service-account-refresh.ts b/src/main/rate-limits/service/service-account-refresh.ts
-index ed8578e369404f588b6ab2f43831dd7bb5f3ecd1..00cacfcb3c7a7a5a0cab5b29cff862ccb5b2125a 100644
+index 6aeacd99583b8930ee4f2781ea79f2cca779f04c..2f3a33ce4617a5f9864a262455150f0a702c1ea3 100644
 --- a/src/main/rate-limits/service/service-account-refresh.ts
 +++ b/src/main/rate-limits/service/service-account-refresh.ts
-@@ -29,6 +29,15 @@ export abstract class RateLimitServiceAccountRefresh extends RateLimitServiceIna
-     return this.getState()
+@@ -42,6 +42,15 @@ export abstract class RateLimitServiceAccountRefresh extends RateLimitServiceIna
+     })
    }
  
 +  async refreshCodexBar(): Promise<RateLimitState> {
@@ -1455,10 +1455,10 @@ index ed8578e369404f588b6ab2f43831dd7bb5f3ecd1..00cacfcb3c7a7a5a0cab5b29cff862cc
      this.minimaxFetchGeneration += 1
      // Why: saving/forgetting the cookie can race an in-flight fetch; clear the visible snapshot before any old-cookie result returns.
 diff --git a/src/main/rate-limits/service/service-configuration.ts b/src/main/rate-limits/service/service-configuration.ts
-index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17bba106bc2 100644
+index fd9dcf1375c34b49e4338e32ee688b201db329a5..81a14f59d7df4bfb602e434c13306d49195e7a57 100644
 --- a/src/main/rate-limits/service/service-configuration.ts
 +++ b/src/main/rate-limits/service/service-configuration.ts
-@@ -13,6 +13,8 @@ import {
+@@ -16,6 +16,8 @@ import {
    type GeminiCliOAuthEnabledResolver,
    type InactiveCodexAccountInfo,
    type InactiveClaudeAccountInfo,
@@ -1467,7 +1467,7 @@ index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17b
    type RateLimitState,
    normalizeCodexAccountSelectionTarget,
    normalizeClaudeAccountSelectionTarget,
-@@ -61,11 +63,17 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+@@ -76,11 +78,17 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
      this.inactiveClaudeAccountsGeneration += 1
    }
  
@@ -1486,7 +1486,7 @@ index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17b
    attach(mainWindow: BrowserWindow): void {
      this.detachWindowListeners?.()
      this.mainWindow = mainWindow
-@@ -96,6 +104,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+@@ -111,6 +119,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
    }
  
    start(options: { fetchImmediately?: boolean } = {}): void {
@@ -1494,7 +1494,7 @@ index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17b
      if (options.fetchImmediately !== false) {
        void this.fetchAll()
      } else {
-@@ -105,6 +114,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+@@ -120,6 +129,7 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
    }
  
    stop(): void {
@@ -1502,8 +1502,8 @@ index 2a788b1cf935cbb220f4205a6e3e11a679994697..b06b7674b5a2baf865ededf55c5cc17b
      this.abortActiveFetchCycle()
      this.clearQueuedFetches()
      this.inactiveClaudeFetching.clear()
-@@ -127,9 +137,16 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
-       minimaxApiKeyConfigured: hasMiniMaxApiKey(),
+@@ -143,9 +153,16 @@ export abstract class RateLimitServiceConfiguration extends RateLimitServiceAcco
+       zcodePlanApiKeyConfigured: hasZcodePlanApiKey(),
        opencodeGoApiKeyConfigured: this.openCodeGoApiKeyConfigured,
        grokAuthConfigured: this.grokAuthConfigured,
 +      // Why: absence of the CodexBar binary is the single reason the Qwen Cloud meter can't
@@ -1576,20 +1576,20 @@ index 49531ee3fb16fd56aae11587d698f76ce40b401e..d6c55c7cb2f792b9e58fe3ce5c8fdcf0
      if (this.isFetching) {
        if (options?.force) {
 diff --git a/src/main/rate-limits/service/service-full-cycle-application.ts b/src/main/rate-limits/service/service-full-cycle-application.ts
-index 9e9d9506a0519d602148b5585364e6dfbbeb1c0a..508f8406895de3a2615982d1926034685a3c3a38 100644
+index 2731f882be5a5c4f628218cd88fba37f908f5c90..0d43483586c910cd83b89e23bdbf0f2223e0f655 100644
 --- a/src/main/rate-limits/service/service-full-cycle-application.ts
 +++ b/src/main/rate-limits/service/service-full-cycle-application.ts
-@@ -36,7 +36,8 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
-         miniMaxResult
-       ],
+@@ -39,7 +39,8 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
        grokResultPromise,
--      cursorResultPromise
-+      cursorResultPromise,
+       cursorResultPromise,
+       zcodeResultPromise,
+-      antigravityResultPromise
++      antigravityResultPromise,
 +      codexBarSnapshotPromise
      } = prepared
      if (signal.aborted) {
        return
-@@ -52,7 +53,10 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
+@@ -55,7 +56,10 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
              updatedAt: Date.now(),
              error:
                claudeResult.reason instanceof Error ? claudeResult.reason.message : 'Unknown error',
@@ -1601,9 +1601,9 @@ index 9e9d9506a0519d602148b5585364e6dfbbeb1c0a..508f8406895de3a2615982d192603468
            } satisfies ProviderRateLimits)
  
      const codex =
-@@ -217,5 +221,11 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
-       grok: this.applyStalePolicy(grok, previousState.grok),
-       cursor: cursorAccountChanged ? cursor : this.applyStalePolicy(cursor, previousState.cursor)
+@@ -241,5 +245,11 @@ export abstract class RateLimitServiceFullCycleApplication extends RateLimitServ
+             : this.applyStalePolicy(zcode, previousState.zcode),
+       antigravity: this.applyStalePolicy(antigravity, previousState.antigravity)
      })
 +
 +    const codexBarSnapshot = await codexBarSnapshotPromise
@@ -1614,10 +1614,10 @@ index 9e9d9506a0519d602148b5585364e6dfbbeb1c0a..508f8406895de3a2615982d192603468
    }
  }
 diff --git a/src/main/rate-limits/service/service-full-cycle-preparation.ts b/src/main/rate-limits/service/service-full-cycle-preparation.ts
-index df36011ab31242a673c5639d389177412fa33482..e92c5bf3ef7a4f00281640eea99857c3102ab75f 100644
+index f847cbf150973e0ea67b9c2883010aac88732154..a49b0be66972bbe667e55527129dbf1d84366947 100644
 --- a/src/main/rate-limits/service/service-full-cycle-preparation.ts
 +++ b/src/main/rate-limits/service/service-full-cycle-preparation.ts
-@@ -8,6 +8,7 @@ import { readCursorAuthSession } from '../cursor-auth'
+@@ -12,6 +12,7 @@ import { ZCODE_PLAN_SITE_BASE_URLS } from '../../../shared/zcode-plan-sites'
  import { fetchMiniMaxRateLimits } from '../minimax/minimax-fetcher'
  import { createHash } from 'node:crypto'
  import { fetchOpenCodeGoUsage } from '../opencode-go-usage-source-selection'
@@ -1625,27 +1625,27 @@ index df36011ab31242a673c5639d389177412fa33482..e92c5bf3ef7a4f00281640eea99857c3
  import { RateLimitServiceFetchPolicy } from './service-fetch-policy'
  import type { SettledProviderResult } from './service-sibling-provider-result'
  import type {
-@@ -44,6 +45,9 @@ export type FetchAllCyclePrepared = {
-   ]
-   grokResultPromise: Promise<SettledProviderResult>
+@@ -52,6 +53,9 @@ export type FetchAllCyclePrepared = {
    cursorResultPromise: Promise<SettledProviderResult>
+   zcodeResultPromise: Promise<SettledProviderResult>
+   antigravityResultPromise: Promise<SettledProviderResult>
 +  // Why: one batch reads every CodexBar provider in parallel; started here so its CLI
 +  // round trips overlap the HTTP fetches instead of adding to the cycle's latency.
 +  codexBarSnapshotPromise: Promise<CodexBarUsageSnapshot>
  }
  
  export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServiceFetchPolicy {
-@@ -130,7 +134,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
-         ? this.withFetchingStatus(null, 'minimax')
-         : this.withFetchingStatus(previousState.minimax, 'minimax'),
-       grok: this.withFetchingStatus(previousState.grok, 'grok'),
--      cursor: this.withFetchingStatus(previousState.cursor, 'cursor')
-+      cursor: this.withFetchingStatus(previousState.cursor, 'cursor'),
+@@ -166,7 +170,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
+       cursor: this.withFetchingStatus(previousState.cursor, 'cursor'),
+       zcode: zcodeConfigChanged
+         ? this.withFetchingStatus(null, 'zcode')
+-        : this.withFetchingStatus(previousState.zcode, 'zcode')
++        : this.withFetchingStatus(previousState.zcode, 'zcode'),
 +      ...this.withCodexBarFetchingStatus(previousState)
      })
  
-     // Why: the Cursor probe reads the macOS Keychain, so it is awaited inside the
-@@ -154,6 +159,10 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
+     // Why its own promise: the keychain read and the desktop state.vscdb read
+@@ -209,6 +214,10 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
        (value) => ({ status: 'fulfilled', value }) as const,
        (reason) => ({ status: 'rejected', reason }) as const
      )
@@ -1656,18 +1656,18 @@ index df36011ab31242a673c5639d389177412fa33482..e92c5bf3ef7a4f00281640eea99857c3
  
      // Why: skip automated Claude fetches while a Retry-After window is open or a live session feed is fresher than the OAuth poll would be.
      const claudeFetchGated =
-@@ -231,7 +240,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
-         miniMaxResult
-       ],
+@@ -309,7 +318,8 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
        grokResultPromise,
--      cursorResultPromise
-+      cursorResultPromise,
+       cursorResultPromise,
+       zcodeResultPromise,
+-      antigravityResultPromise
++      antigravityResultPromise,
 +      codexBarSnapshotPromise
      }
    }
  }
 diff --git a/src/main/rate-limits/service/service-inactive-accounts.ts b/src/main/rate-limits/service/service-inactive-accounts.ts
-index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b03348f69691 100644
+index e59d1eeb3a91b8fbf9a5b70d805c5efbbdb1b2b5..a40af482275320664e172189a1f00de6acfa20b3 100644
 --- a/src/main/rate-limits/service/service-inactive-accounts.ts
 +++ b/src/main/rate-limits/service/service-inactive-accounts.ts
 @@ -4,7 +4,9 @@ import { RateLimitServicePolling } from './service-polling'
@@ -1711,7 +1711,7 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
      if (accounts.length === 0) {
        return
      }
-@@ -163,14 +169,16 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+@@ -161,14 +167,16 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
            }
            const cached = this.inactiveCodexCache.get(account.id) ?? null
            this.inactiveCodexCache.set(account.id, this.applyStalePolicy(fresh, cached))
@@ -1730,7 +1730,7 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
            }
          }
          this.inactiveCodexFetching.delete(account.id)
-@@ -191,6 +199,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+@@ -189,6 +197,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
      this.inactiveClaudeCache.delete(accountId)
      this.inactiveClaudeFetching.delete(accountId)
      this.pushToRenderer()
@@ -1738,7 +1738,7 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
    }
  
    protected isCurrentInactiveClaudeAccount(accountId: string): boolean {
-@@ -200,7 +209,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+@@ -198,7 +207,7 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
    }
  
    protected isCurrentInactiveCodexAccount(accountId: string): boolean {
@@ -1747,7 +1747,7 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
        (account) => account.id === accountId
      )
    }
-@@ -223,7 +232,9 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+@@ -221,7 +230,9 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
  
    protected pruneInactiveCodexState(): void {
      const currentIds = new Set(
@@ -1758,7 +1758,7 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
      )
      for (const accountId of this.inactiveCodexCache.keys()) {
        if (!currentIds.has(accountId)) {
-@@ -242,5 +253,53 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
+@@ -240,5 +251,53 @@ export abstract class RateLimitServiceInactiveAccounts extends RateLimitServiceP
      this.inactiveCodexCache.delete(accountId)
      this.inactiveCodexFetching.delete(accountId)
      this.pushToRenderer()
@@ -1813,20 +1813,20 @@ index 5d977991af4413f18b8d977b64a859f8ed1fe9a3..4ec6353a602609631732c2fd0139b033
    }
  }
 diff --git a/src/main/rate-limits/service/service-polling.ts b/src/main/rate-limits/service/service-polling.ts
-index e49c003cbb1d80d35ef6d2a543feb2702bd8a940..7d1010e93ac3731fd34600d2159aa89b901acd5c 100644
+index 402495080c279d5a0747520380fefd23271a788b..3e746ef95c570c96a46bd19fa2cec40ea2845cd5 100644
 --- a/src/main/rate-limits/service/service-polling.ts
 +++ b/src/main/rate-limits/service/service-polling.ts
-@@ -79,12 +79,15 @@ export abstract class RateLimitServicePolling extends RateLimitServiceFetchQueue
-       minimax: this.state.minimax,
+@@ -80,12 +80,15 @@ export abstract class RateLimitServicePolling extends RateLimitServiceFetchQueue
        grok: this.state.grok,
        antigravity: this.state.antigravity,
--      cursor: this.state.cursor
+       cursor: this.state.cursor,
+-      zcode: this.state.zcode
 -    }
 -    return Object.entries(byProvider).map(([provider, limits]) => ({
 -      provider: provider as ActiveRateLimitProvider,
 -      limits
 -    }))
-+      cursor: this.state.cursor,
++      zcode: this.state.zcode,
 +      qwencloud: this.state.qwencloud
 +    }
 +    return Object.entries(byProvider)
@@ -1839,10 +1839,10 @@ index e49c003cbb1d80d35ef6d2a543feb2702bd8a940..7d1010e93ac3731fd34600d2159aa89b
  
    protected getActiveWindowRefreshPlan(now: number): ActiveWindowRefreshPlan {
 diff --git a/src/main/rate-limits/service/service-provider-cycles.ts b/src/main/rate-limits/service/service-provider-cycles.ts
-index 75c56d96e6728c68a8c9ab52049ab0a81c3bb8f4..243e82559c70130eea41da904dcb4e4d71e3cd51 100644
+index fdb7040b58af8d9a4531b0bafb04dbf59c90ea60..9b0c4a631d1cb876bec302986df47c0dca75e022 100644
 --- a/src/main/rate-limits/service/service-provider-cycles.ts
 +++ b/src/main/rate-limits/service/service-provider-cycles.ts
-@@ -117,7 +117,10 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
+@@ -116,7 +116,10 @@ export abstract class RateLimitServiceProviderCycles extends RateLimitServiceFul
        weekly: null,
        updatedAt: Date.now(),
        error: err instanceof Error ? err.message : 'Unknown error',
@@ -1945,23 +1945,23 @@ index 75f032159fab22d739bb044df708ddbbc1e53e0e..c64726a89f2016ac7acaf2ca2ed871ce
 +  }
  }
 diff --git a/src/main/rate-limits/service/service-state.ts b/src/main/rate-limits/service/service-state.ts
-index a10bfa3f3c00592fe1eb51d7c0663aa8b134f9c9..41c5bfeb253b27c8a65837bf6c2cd021b3199070 100644
+index 0ec13020a6e925c97b4357fcb29a3b4ba4bd185f..3134704345aa25aeffbccfdf25ca59142cf0ef15 100644
 --- a/src/main/rate-limits/service/service-state.ts
 +++ b/src/main/rate-limits/service/service-state.ts
-@@ -14,6 +14,7 @@ import {
-   type OpenCodeGoRateLimitConfig,
-   type MiniMaxRateLimitConfig,
+@@ -16,6 +16,7 @@ import {
+   type AntigravityUsageEnabledResolver,
+   type ZcodePlanRateLimitConfig,
    type GeminiCliOAuthEnabledResolver,
 +  type ManagedAccountContextResolver,
    type NormalizedCodexAccountSelectionTarget,
    type NormalizedClaudeAccountSelectionTarget,
    type InactiveClaudeAccountInfo,
-@@ -32,9 +33,13 @@ export abstract class RateLimitServiceState {
-     antigravity: null,
+@@ -35,9 +36,13 @@ export abstract class RateLimitServiceState {
      minimax: null,
      grok: null,
--    cursor: null
-+    cursor: null,
+     cursor: null,
+-    zcode: null
++    zcode: null,
 +    qwencloud: null
    }
    protected grokAuthConfigured = readGrokAuthSession().status === 'ok'
@@ -1971,22 +1971,22 @@ index a10bfa3f3c00592fe1eb51d7c0663aa8b134f9c9..41c5bfeb253b27c8a65837bf6c2cd021
    // Why: the Cursor probe reads the macOS Keychain, so it cannot run synchronously
    // at construction the way Grok's auth-file probe does; each fetch cycle sets it.
    protected cursorAuthConfigured = false
-@@ -52,7 +57,8 @@ export abstract class RateLimitServiceState {
-     minimax: 0,
+@@ -56,7 +61,8 @@ export abstract class RateLimitServiceState {
      grok: 0,
      antigravity: 0,
--    cursor: 0
-+    cursor: 0,
+     cursor: 0,
+-    zcode: 0
++    zcode: 0,
 +    qwencloud: 0
    }
    // Why: consecutive failures drive exponential backoff of the fast activation-retry lane; reset on any success/unavailable result.
    protected activeFailureStreakByProvider: Record<ActiveRateLimitProvider, number> = {
-@@ -64,11 +70,13 @@ export abstract class RateLimitServiceState {
-     minimax: 0,
+@@ -69,11 +75,13 @@ export abstract class RateLimitServiceState {
      grok: 0,
      antigravity: 0,
--    cursor: 0
-+    cursor: 0,
+     cursor: 0,
+-    zcode: 0
++    zcode: 0,
 +    qwencloud: 0
    }
    protected mainWindow: BrowserWindow | null = null
@@ -1996,9 +1996,9 @@ index a10bfa3f3c00592fe1eb51d7c0663aa8b134f9c9..41c5bfeb253b27c8a65837bf6c2cd021
    protected fullFetchQueued = false
    protected codexOnlyFetchQueued = false
    protected claudeOnlyFetchQueued = false
-@@ -99,8 +107,11 @@ export abstract class RateLimitServiceState {
-   protected miniMaxConfigResolver: (() => MiniMaxRateLimitConfig) | null = null
+@@ -109,8 +117,11 @@ export abstract class RateLimitServiceState {
    protected geminiCliOAuthEnabledResolver: GeminiCliOAuthEnabledResolver | null = null
+   protected antigravityUsageEnabledResolver: AntigravityUsageEnabledResolver | null = null
    protected inactiveClaudeAccountsResolver: (() => InactiveClaudeAccountInfo[]) | null = null
 -  protected inactiveCodexAccountsResolver: (() => InactiveCodexAccountInfo[]) | null = null
 +  protected inactiveCodexAccountsResolver:
@@ -2010,15 +2010,16 @@ index a10bfa3f3c00592fe1eb51d7c0663aa8b134f9c9..41c5bfeb253b27c8a65837bf6c2cd021
    protected inactiveCodexCache = new Map<string, ProviderRateLimits>()
    protected inactiveClaudeFetching = new Set<string>()
 diff --git a/src/main/rate-limits/service/service-types.ts b/src/main/rate-limits/service/service-types.ts
-index 9783f37f77df34378bf0c9cb251ce57da1494968..737a31ba36061b2489a851da64f56d55f349983d 100644
+index 5bae83b1449cd3609080d7456f5d28121a8a157e..b9d4409c16c0759f616eb23eaa25854405b6d931 100644
 --- a/src/main/rate-limits/service/service-types.ts
 +++ b/src/main/rate-limits/service/service-types.ts
-@@ -1,8 +1,17 @@
+@@ -1,9 +1,18 @@
 -import type { ProviderRateLimits } from '../../../shared/rate-limit-types'
 +import type {
 +  ProviderRateLimits,
 +  SystemDefaultLaneDescriptor
 +} from '../../../shared/rate-limit-types'
+ import type { ZcodePlanSite } from '../../../shared/zcode-plan-sites'
  import type { ClaudeRuntimeAuthPreparation } from '../../claude-accounts/runtime-auth-service'
 -import type { ClaudeAccountSelectionTarget } from '../../claude-accounts/runtime-selection'
 +import type {
@@ -2034,7 +2035,7 @@ index 9783f37f77df34378bf0c9cb251ce57da1494968..737a31ba36061b2489a851da64f56d55
  import type { CodexRateLimitHomeResolution } from '../../codex-accounts/runtime-home-service'
  
  export type {
-@@ -33,6 +42,18 @@ export type InactiveCodexAccountInfo = {
+@@ -34,6 +43,18 @@ export type InactiveCodexAccountInfo = {
    resolveHome: () => { kind: 'ready'; managedHomePath: string } | { kind: 'skip' }
  }
  
@@ -2053,10 +2054,12 @@ index 9783f37f77df34378bf0c9cb251ce57da1494968..737a31ba36061b2489a851da64f56d55
  export type CodexHomePathResolver = (
    target?: CodexAccountSelectionTarget
  ) => CodexRateLimitHomeResolution
-@@ -110,6 +131,7 @@ export type InternalRateLimitState = {
+@@ -131,7 +152,8 @@ export type InternalRateLimitState = {
    minimax: ProviderRateLimits | null
    grok: ProviderRateLimits | null
    cursor: ProviderRateLimits | null
+-  zcode: ProviderRateLimits | null
++  zcode: ProviderRateLimits | null,
 +  qwencloud: ProviderRateLimits | null
  }
  
@@ -2491,13 +2494,13 @@ index 0000000000000000000000000000000000000000..0fdca4faf0fdd514571b5a1846b3e312
 +  )
 +}
 diff --git a/src/shared/rate-limit-state-factory.ts b/src/shared/rate-limit-state-factory.ts
-index 3dade988f0b9866f96f6ca1216d1c41459580651..8ba3a7b640e124b1722e59dc66dfed0d8a80b09a 100644
+index b9af7fe1b68c66ff9d36e130605e4415c1e0ad62..0d2db479fed4a197398e4b1bdcb12ba4dde9fa85 100644
 --- a/src/shared/rate-limit-state-factory.ts
 +++ b/src/shared/rate-limit-state-factory.ts
-@@ -12,10 +12,12 @@ export function createEmptyRateLimitState(overrides: Partial<RateLimitState> = {
-     minimax: null,
+@@ -13,10 +13,12 @@ export function createEmptyRateLimitState(overrides: Partial<RateLimitState> = {
      grok: null,
      cursor: null,
+     zcode: null,
 +    qwencloud: null,
      minimaxCookieConfigured: false,
      minimaxApiKeyConfigured: false,
@@ -2505,40 +2508,23 @@ index 3dade988f0b9866f96f6ca1216d1c41459580651..8ba3a7b640e124b1722e59dc66dfed0d
      grokAuthConfigured: false,
 +    codexbarAvailable: false,
      cursorAuthConfigured: false,
+     zcodePlanApiKeyConfigured: false,
      claudeTarget: { runtime: 'host', wslDistro: null },
-     codexTarget: { runtime: 'host', wslDistro: null },
-diff --git a/src/shared/rate-limit-types.test.ts b/src/shared/rate-limit-types.test.ts
-index b24e403857944842b2531e30a877710bdd858b76..fe1ca1b24ed306dedb98689e8399b985d3630f81 100644
---- a/src/shared/rate-limit-types.test.ts
-+++ b/src/shared/rate-limit-types.test.ts
-@@ -17,10 +17,12 @@ describe('RateLimitState', () => {
-       minimax: null,
-       grok: null,
-       cursor: null,
-+      qwencloud: null,
-       minimaxCookieConfigured: false,
-       minimaxApiKeyConfigured: false,
-       opencodeGoApiKeyConfigured: false,
-       grokAuthConfigured: false,
-+      codexbarAvailable: false,
-       cursorAuthConfigured: false,
-       claudeTarget: { runtime: 'host', wslDistro: null },
-       codexTarget: { runtime: 'host', wslDistro: null },
 diff --git a/src/shared/rate-limit-types.ts b/src/shared/rate-limit-types.ts
-index 48ff7c7abe35aa867bd2a6cba20da6780c2d288f..165b2e18f0ce29af4036269e4e78239bf38ada0f 100644
+index 0a9abf64ab130c514aaba0e39ad16ee225d8428b..39b3e1756c1b7ed4d53844aaabe084b3f7c83390 100644
 --- a/src/shared/rate-limit-types.ts
 +++ b/src/shared/rate-limit-types.ts
-@@ -58,6 +58,9 @@ export type ProviderRateLimits = {
-     | 'grok'
+@@ -85,6 +85,9 @@ export type ProviderRateLimits = {
      | 'antigravity'
      | 'cursor'
+     | 'zcode'
 +    // Metered through the CodexBar CLI rather than a native fetcher; see
 +    // src/main/rate-limits/codexbar-cli-source.ts.
 +    | 'qwencloud'
    /** 5-hour session window, null if not available. */
    session: RateLimitWindow | null
    /** 7-day weekly window, null if not available. */
-@@ -117,6 +120,12 @@ export type GrokAccountStatus = {
+@@ -146,6 +149,12 @@ export type GrokAccountStatus = {
    tokenFresh: boolean
    error: string | null
  }
@@ -2551,15 +2537,17 @@ index 48ff7c7abe35aa867bd2a6cba20da6780c2d288f..165b2e18f0ce29af4036269e4e78239b
  
  export type CursorAccountStatus = {
    signedIn: boolean
-@@ -139,6 +148,7 @@ export type RateLimitState = {
+@@ -168,7 +177,8 @@ export type RateLimitState = {
    minimax: ProviderRateLimits | null
    grok: ProviderRateLimits | null
    cursor: ProviderRateLimits | null
+-  zcode: ProviderRateLimits | null
++  zcode: ProviderRateLimits | null,
 +  qwencloud: ProviderRateLimits | null
    /**
     * True when a MiniMax session cookie is persisted on disk. The cookie lives
     * outside GlobalSettings, so this flag is the durable signal that the
-@@ -162,6 +172,13 @@ export type RateLimitState = {
+@@ -192,6 +202,13 @@ export type RateLimitState = {
    opencodeGoApiKeyConfigured: boolean
    /** True when main finds a Grok CLI session file (~/.grok/auth.json or GROK_HOME). */
    grokAuthConfigured: boolean
@@ -2573,8 +2561,8 @@ index 48ff7c7abe35aa867bd2a6cba20da6780c2d288f..165b2e18f0ce29af4036269e4e78239b
    /**
     * True when main finds a Cursor session on this machine: the macOS Keychain
     * item cursor-agent writes, its legacy auth.json, or the Cursor IDE's own
-@@ -170,6 +187,12 @@ export type RateLimitState = {
-   cursorAuthConfigured: boolean
+@@ -206,6 +223,12 @@ export type RateLimitState = {
+   zcodePlanApiKeyConfigured?: boolean
    claudeTarget: RateLimitRuntimeTarget
    codexTarget: RateLimitRuntimeTarget
 +  /** Active managed account; `null` selects the provider login, absent on older hosts. */

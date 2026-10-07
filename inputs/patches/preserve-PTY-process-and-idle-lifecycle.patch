@@ -3,37 +3,13 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: preserve PTY process and idle lifecycle
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Upstream ships resolveCommandOnLocalPath itself since v1.4.221, so the command
+path resolver is upstream's; the DEC private-mode chunk filter on the output
+clock and its test stay carried.
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
-diff --git a/src/main/codex/codex-persistent-command-retention.test.ts b/src/main/codex/codex-persistent-command-retention.test.ts
-index 498d5b186ef42176859a061e5419651e85c5c2f9..2c123a3b910c993a1abe45b573f80ef90d41eed2 100644
---- a/src/main/codex/codex-persistent-command-retention.test.ts
-+++ b/src/main/codex/codex-persistent-command-retention.test.ts
-@@ -71,14 +71,15 @@ describe('persistent command retention', () => {
-     items.streams.flush()
-     const originalJoin = Array.prototype.join
-     let retainedJoins = 0
--    const spy = vi
--      .spyOn(Array.prototype, 'join')
--      .mockImplementation(function (this: unknown[], separator) {
--        if (this[0] === 'retained-prefix') {
--          retainedJoins += 1
--        }
--        return originalJoin.call(this, separator)
--      })
-+    const spy = vi.spyOn(Array.prototype, 'join').mockImplementation(function (
-+      this: unknown[],
-+      separator
-+    ) {
-+      if (this[0] === 'retained-prefix') {
-+        retainedJoins += 1
-+      }
-+      return originalJoin.call(this, separator)
-+    })
-     try {
-       for (let index = 0; index < 100; index += 1) {
-         items.streams.flush()
 diff --git a/src/main/daemon/daemon-init-dependency-mocks.ts b/src/main/daemon/daemon-init-dependency-mocks.ts
 index d7217d4df635852636034f3f9028614d76503f67..163f8265d1eba9fb93d277bdcbdd773a76097606 100644
 --- a/src/main/daemon/daemon-init-dependency-mocks.ts
@@ -296,56 +272,6 @@ index c1d73d95a2770d19fc6816d991e2cc9339cea80a..ae0cacffe19ef96197d0fdb77dfc687c
        )
      )
    } catch (error) {
-diff --git a/src/main/ipc/command-path-resolver.ts b/src/main/ipc/command-path-resolver.ts
-index e2fe49747e0d204274d0e8f1eae3c8e1e0013ee6..963383dab033b89900fd664e872030732398459a 100644
---- a/src/main/ipc/command-path-resolver.ts
-+++ b/src/main/ipc/command-path-resolver.ts
-@@ -58,18 +58,22 @@ async function isExecutableFile(candidate: string, isWin: boolean): Promise<bool
- }
- 
- /**
-- * Resolve whether `command` is an executable on PATH using only `node:fs`
-+ * Resolve `command` to its absolute path on PATH using only `node:fs`
-  * — zero `where`/`which` subprocess spawns. Mirrors the canonical
-  * which(1)/where.exe lookup, including the current preflight quirk that only
-  * counts matches which resolve to an ABSOLUTE path (so relative PATH entries
-  * and relative command paths stay not-found, exactly as before).
-+ *
-+ * Returns the path rather than a boolean because spawn callers need it: on
-+ * Windows, `ProcessSpec.program` must already be absolute or the child's own
-+ * PATH decides what runs.
-  */
--export async function isCommandOnLocalPath(
-+export async function resolveCommandOnLocalPath(
-   command: string,
-   options: ResolveCommandOptions = {}
--): Promise<boolean> {
-+): Promise<string | null> {
-   if (!command) {
--    return false
-+    return null
-   }
-   const platform = options.platform ?? process.platform
-   const env = options.env ?? process.env
-@@ -98,9 +102,16 @@ export async function isCommandOnLocalPath(
-         continue
-       }
-       if (await isExecutableFile(candidate, isWin)) {
--        return true
-+        return candidate
-       }
-     }
-   }
--  return false
-+  return null
-+}
-+
-+export async function isCommandOnLocalPath(
-+  command: string,
-+  options: ResolveCommandOptions = {}
-+): Promise<boolean> {
-+  return (await resolveCommandOnLocalPath(command, options)) !== null
- }
 diff --git a/src/main/ipc/pty-session-liveness-and-ownership.test.ts b/src/main/ipc/pty-session-liveness-and-ownership.test.ts
 index 574e83c122085447cace479c47166afca9773841..4db9e6f7147db0b0521fb23637522eefa8013ec7 100644
 --- a/src/main/ipc/pty-session-liveness-and-ownership.test.ts
@@ -447,7 +373,7 @@ index 37226017b8f365b589efc3f6c383ffd8060644d5..6568bc55c79aa66fe5bdb20879203ce3
    )
  
 diff --git a/src/main/ipc/pty/ipc/spawn-commit.ts b/src/main/ipc/pty/ipc/spawn-commit.ts
-index 77491c9fb11b6e065497d42a42d926bde724bfe3..a43f20767c17d23c4209e2fc42173aa14f3232b2 100644
+index 24df59c1201c3ebd15c1491c1511707934c56300..055b7d7ff3e2ba09ef6a6b8d9c20acc86c649217 100644
 --- a/src/main/ipc/pty/ipc/spawn-commit.ts
 +++ b/src/main/ipc/pty/ipc/spawn-commit.ts
 @@ -1,6 +1,9 @@
@@ -461,7 +387,7 @@ index 77491c9fb11b6e065497d42a42d926bde724bfe3..a43f20767c17d23c4209e2fc42173aa1
  import { registerPty } from '../../../memory/pty-registry'
  import type { PtySpawnResult } from '../../../providers/types'
  import { clearMigrationUnsupportedPtysForPaneKey } from '../../../agent-hooks/migration-unsupported-pty-state'
-@@ -120,7 +123,7 @@ export async function commitPtyIpcSpawn(ctx: PtyIpcSpawnState): Promise<PtySpawn
+@@ -126,7 +129,7 @@ async function commitReservedPtyIpcSpawn(ctx: PtyIpcSpawnState): Promise<PtySpaw
      )
    }
    if (ctx.isClaudeLaunch && !ctx.stablePaneOwner) {
@@ -471,7 +397,7 @@ index 77491c9fb11b6e065497d42a42d926bde724bfe3..a43f20767c17d23c4209e2fc42173aa1
    // Why: record the paneKey mapping so clearProviderPtyState can clear the agent-hooks server's per-paneKey caches on exit.
    // Why: args.env is untrusted IPC JSON (type unenforced); bound the paneKey so malformed/oversized values can't pollute ptyPaneKey or clearPaneState.
 diff --git a/src/main/ipc/pty/runtime/spawn-commit.ts b/src/main/ipc/pty/runtime/spawn-commit.ts
-index 856039e7d5a34543dab5f4294a95a2e7d191feaf..48600f3f5d3f65cc11dd6eaeb5beeda74dc5f3e8 100644
+index e7a6de5e7bcb067fc9d05e4f8e9d1efec923cfba..1c9ccb968fa2a48f01ea140dc9f69ddee55e2ab7 100644
 --- a/src/main/ipc/pty/runtime/spawn-commit.ts
 +++ b/src/main/ipc/pty/runtime/spawn-commit.ts
 @@ -7,7 +7,10 @@ import {
@@ -486,7 +412,7 @@ index 856039e7d5a34543dab5f4294a95a2e7d191feaf..48600f3f5d3f65cc11dd6eaeb5beeda7
  import { registerPty } from '../../../memory/pty-registry'
  import { rememberPaneKeyForPty } from '../pane/key-state'
  import {
-@@ -223,7 +226,7 @@ export async function commitRuntimePtySpawn(ctx: RuntimePtySpawnState) {
+@@ -239,7 +242,7 @@ async function commitReservedRuntimePtySpawn(ctx: RuntimePtySpawnState) {
      ctx.deps.runtime?.noteTerminalSpawnCommand?.(ctx.result.id, ctx.launchCommand ?? null)
    }
    if (ctx.isClaudeLaunch && !ctx.stablePaneOwner) {
@@ -495,36 +421,6 @@ index 856039e7d5a34543dab5f4294a95a2e7d191feaf..48600f3f5d3f65cc11dd6eaeb5beeda7
    }
    if (args.telemetry && !ctx.stablePaneOwner) {
      recordPtySpawnTelemetry(args.telemetry)
-diff --git a/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts b/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
-index 3907fa7a6458f72be5ea9fb7d199a3af063acd85..5a859fb2e81f7316215852040b396110c13f586b 100644
---- a/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
-+++ b/src/main/native-chat/agent-session-wire/agent-session-empty-delta-retention.test.ts
-@@ -24,15 +24,16 @@ describe('empty streamed deltas', () => {
-       }
-       const originalJoin = Array.prototype.join
-       let retainedSlots = -1
--      const spy = vi
--        .spyOn(Array.prototype, 'join')
--        .mockImplementation(function (this: unknown[], separator) {
--          // Byte counters cannot detect empty entries retained by the stream's chunk array.
--          if (separator === '' && this[0] === prefix) {
--            retainedSlots = this.length
--          }
--          return originalJoin.call(this, separator)
--        })
-+      const spy = vi.spyOn(Array.prototype, 'join').mockImplementation(function (
-+        this: unknown[],
-+        separator
-+      ) {
-+        // Byte counters cannot detect empty entries retained by the stream's chunk array.
-+        if (separator === '' && this[0] === prefix) {
-+          retainedSlots = this.length
-+        }
-+        return originalJoin.call(this, separator)
-+      })
-       let snapshot: ReturnType<typeof streams.snapshot>
-       try {
-         snapshot = streams.snapshot('thread', 'item')
 diff --git a/src/main/pty/posix-pty-descendant-process-groups.ts b/src/main/pty/posix-pty-descendant-process-groups.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..c489c706b42e883856b5391c89ccdff0a17e8897
@@ -706,10 +602,10 @@ index f0b3727c6ee44199812b2730d5f4139737910fd0..b754860fe38acd45c1cff8eef39584a7
  
  describe('POSIX PTY group-sweep breadcrumbs', () => {
 diff --git a/src/main/pty/posix-pty-process-groups.ts b/src/main/pty/posix-pty-process-groups.ts
-index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676ccbda73fa 100644
+index 2607875b269d3c01239abf422ddd253f3943ac53..1e56ccce53318bbc9a5e3404716e9e817247e1bb 100644
 --- a/src/main/pty/posix-pty-process-groups.ts
 +++ b/src/main/pty/posix-pty-process-groups.ts
-@@ -5,6 +5,10 @@ import {
+@@ -6,6 +6,10 @@ import {
    runProcessSync,
    type ProcessResult
  } from '../../shared/child-process/run-process'
@@ -720,7 +616,7 @@ index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676c
  
  const PROCESS_TABLE_TIMEOUT_MS = 1_000
  const PROCESS_TABLE_MAX_BYTES = 1024 * 1024
-@@ -36,6 +40,7 @@ export type PosixPtyProcessGroupTerminationDeps = {
+@@ -37,6 +41,7 @@ export type PosixPtyProcessGroupTerminationDeps = {
    platform?: NodeJS.Platform
    currentPid?: number
    readProcessTable?: () => string
@@ -728,7 +624,7 @@ index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676c
    signalProcessGroup?: (pgid: number) => void
  }
  
-@@ -236,6 +241,12 @@ export function signalPosixPtyProcessGroups(
+@@ -233,6 +238,12 @@ export function signalPosixPtyProcessGroups(
      fallback()
      return
    }
@@ -741,7 +637,7 @@ index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676c
    let groups: number[] | null
    try {
      groups = getPosixPtyProcessGroups(
-@@ -246,6 +257,19 @@ export function signalPosixPtyProcessGroups(
+@@ -243,6 +254,19 @@ export function signalPosixPtyProcessGroups(
    } catch {
      groups = null
    }
@@ -761,6 +657,41 @@ index 1f7f05f73a1e3819867d3a2940d1c5b4c99024de..ce05aa544df24fbb1b2b12ea9929676c
    if (!groups || groups.length === 0) {
      fallback()
      return
+diff --git a/src/main/runtime/dec-private-mode-chunk.test.ts b/src/main/runtime/dec-private-mode-chunk.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1f4cf00b9220003820bf17c283a67c6f215ebc93
+--- /dev/null
++++ b/src/main/runtime/dec-private-mode-chunk.test.ts
+@@ -0,0 +1,29 @@
++import { describe, expect, it } from 'vitest'
++import { isDecPrivateModeOnlyChunk } from './dec-private-mode-chunk'
++
++// OMP re-asserts bracketed paste (`ESC[?2004h`) once a second while idle. Counted as output,
++// such a chunk keeps an idle pane "streaming", so the output clock must not advance on it.
++
++const ESC = String.fromCharCode(27)
++const BEL = String.fromCharCode(7)
++const BRACKETED_PASTE_ON = `${ESC}[?2004h`
++
++describe('isDecPrivateModeOnlyChunk', () => {
++  it('accepts one or more private-mode set/reset sequences, multi-parameter included', () => {
++    expect(isDecPrivateModeOnlyChunk(BRACKETED_PASTE_ON)).toBe(true)
++    expect(isDecPrivateModeOnlyChunk(`${ESC}[?2004l${ESC}[?1049;1h${ESC}[?25l`)).toBe(true)
++  })
++
++  it.each([
++    ['empty chunk', ''],
++    ['mode plus text', `${BRACKETED_PASTE_ON}hello`],
++    ['text plus mode', `>${BRACKETED_PASTE_ON}`],
++    ['mode plus CUP position move', `${BRACKETED_PASTE_ON}${ESC}[2;5H`],
++    ['mode plus SGR', `${BRACKETED_PASTE_ON}${ESC}[1;31m`],
++    ['mode plus OSC title', `${BRACKETED_PASTE_ON}${ESC}]0;π > session${BEL}`],
++    ['non-private mode set', `${ESC}[4h`],
++    ['private mode without a parameter', `${ESC}[?h`]
++  ])('rejects %s', (_label, chunk) => {
++    expect(isDecPrivateModeOnlyChunk(chunk)).toBe(false)
++  })
++})
 diff --git a/src/main/runtime/dec-private-mode-chunk.ts b/src/main/runtime/dec-private-mode-chunk.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..6aca8871860099c3043c3d30a00e789948105a96

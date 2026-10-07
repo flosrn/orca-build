@@ -7,7 +7,7 @@ Carried-Because: The publisher must compare the exact Linux artifact against ver
 Tests: config/scripts/build-provenance.test.mjs
 
 diff --git a/.github/CONTRIBUTING.md b/.github/CONTRIBUTING.md
-index 063bf0ba85e5b9a67f7e71a77fdf91170f9b9624..6ee418fa59b2c395e6f7cf3c1eccbd91682fc26a 100644
+index 4b57fc29d1b04630dbfb8070dcc66f6d371cc97e..221b3a80262d41aefb352f6cd59e1d20c610b790 100644
 --- a/.github/CONTRIBUTING.md
 +++ b/.github/CONTRIBUTING.md
 @@ -29,8 +29,11 @@ See [the install policy](../docs/reference/pnpm-install-policy.md).

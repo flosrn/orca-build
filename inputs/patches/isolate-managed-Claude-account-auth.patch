@@ -3,7 +3,13 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: isolate managed Claude account auth
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+The managed-account gate keeps upstream's WSL-bound refusal reason and every
+structured session speaks orchestration as itself
+(structuredSessionChildIdentityEnv); the gate still applies only to a surface
+the auth policy could not attribute to an owned account. The auth-policy wiring
+test is upstream's, which already dropped its source-grep assertion.
+
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
 diff --git a/src/main/claude-accounts/account-config-dir-resources.ts b/src/main/claude-accounts/account-config-dir-resources.ts
@@ -6380,7 +6386,7 @@ index 6e1bd13e1b5813298234f2edb46c4332ab971cb2..ea2e770e51567c849f68bf76ff994bce
      expect(captured[0]!.env).toEqual(invocation.env)
      expect(captured[0]!.agentCommandOverride).toBeUndefined()
 diff --git a/src/main/claude/claude-model-catalog-probe.ts b/src/main/claude/claude-model-catalog-probe.ts
-index 882f716c3c926fecac2d3f4b153a9519290bf696..6decf7632d981204d2045feabcb2ec32b4d09816 100644
+index f3a2646107cf085b0be507e63ec0d260c5a6179e..f145ac60d1a6311f22a118e4774cacb5514a26a1 100644
 --- a/src/main/claude/claude-model-catalog-probe.ts
 +++ b/src/main/claude/claude-model-catalog-probe.ts
 @@ -33,10 +33,15 @@ export function createClaudeModelCatalogProbe(
@@ -6404,10 +6410,10 @@ index 882f716c3c926fecac2d3f4b153a9519290bf696..6decf7632d981204d2045feabcb2ec32
        agentId: 'claude',
        env,
 diff --git a/src/main/claude/claude-stream-json-connection.ts b/src/main/claude/claude-stream-json-connection.ts
-index c6da4419f79ddd19d5912f91de837c842326b4d9..ed16de0752ecf3d788043b5c2abe2bc39545d741 100644
+index 6f67e04b36ead3b5cb03a244bb33c08276f95fcc..2295782e4e14d7c31ec3f972ec2aff5d5b2d26c0 100644
 --- a/src/main/claude/claude-stream-json-connection.ts
 +++ b/src/main/claude/claude-stream-json-connection.ts
-@@ -4,7 +4,8 @@ import type { CanUseTool, OnUserDialog, SDKUserMessage } from '@anthropic-ai/cla
+@@ -5,7 +5,8 @@ import type { CanUseTool, OnUserDialog, SDKUserMessage } from '@anthropic-ai/cla
  import { spawnProcess } from '../../shared/child-process/run-process'
  import {
    markClaudeStructuredChildExited,
@@ -6417,7 +6423,7 @@ index c6da4419f79ddd19d5912f91de837c842326b4d9..ed16de0752ecf3d788043b5c2abe2bc3
  } from '../claude-accounts/live-pty-gate'
  import { buildClaudeChildProcessEnv } from './claude-child-process-environment'
  import { withoutInheritedClaudeConfigDir } from './claude-config-dir-pin'
-@@ -49,6 +50,10 @@ export type ClaudeStreamJsonLaunch = {
+@@ -50,6 +51,10 @@ export type ClaudeStreamJsonLaunch = {
    options: ClaudeStructuredSdkOptions
    cwd: string
    env?: Record<string, string>
@@ -6428,7 +6434,7 @@ index c6da4419f79ddd19d5912f91de837c842326b4d9..ed16de0752ecf3d788043b5c2abe2bc3
  }
  
  export type ClaudeStreamJsonConnectionHandlers = {
-@@ -285,7 +290,7 @@ export async function openClaudeStreamJsonConnection(
+@@ -291,7 +296,7 @@ export async function openClaudeStreamJsonConnection(
    // 'close' are attached makes that unreachable — any later throw still leaves a
    // listener that releases. Nothing between spawn and here can yield, so the child
    // cannot end before the gate is entered.
@@ -6438,7 +6444,7 @@ index c6da4419f79ddd19d5912f91de837c842326b4d9..ed16de0752ecf3d788043b5c2abe2bc3
    const send: ClaudeStreamJsonConnection['send'] = (message, beforeDispatch) => {
      if (closing || exited || terminalError || child.stdin.destroyed || !child.stdin.writable) {
 diff --git a/src/main/claude/claude-structured-launch-resolution.test.ts b/src/main/claude/claude-structured-launch-resolution.test.ts
-index c54d1a5179f3e642def8eda6508feec3d6b18d91..e59ce3b79a0703d712460663e91b5af670ba764d 100644
+index 66fed64c3230da873a87068853577b06ccdd2b4d..5b1e9bb1e603a272bac1cafa5d3c48894b5e0219 100644
 --- a/src/main/claude/claude-structured-launch-resolution.test.ts
 +++ b/src/main/claude/claude-structured-launch-resolution.test.ts
 @@ -6,7 +6,12 @@ import type { AgentSessionRecord } from '../../shared/agent-session-record'
@@ -6455,7 +6461,7 @@ index c54d1a5179f3e642def8eda6508feec3d6b18d91..e59ce3b79a0703d712460663e91b5af6
  import type { ClaudeManagedAccountGateSettings } from '../native-chat/claude-structured-managed-account-support'
  import {
    CLAUDE_DEFAULT_SETTING_SOURCES,
-@@ -510,4 +515,160 @@ describe('claude structured launch resolution', () => {
+@@ -524,4 +529,160 @@ describe('claude structured launch resolution', () => {
        ).resolves.toMatchObject({ providerSessionId: 'provider-current' })
      })
    })
@@ -6617,7 +6623,7 @@ index c54d1a5179f3e642def8eda6508feec3d6b18d91..e59ce3b79a0703d712460663e91b5af6
 +  })
  })
 diff --git a/src/main/claude/claude-structured-launch-resolution.ts b/src/main/claude/claude-structured-launch-resolution.ts
-index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a82df14e7 100644
+index 29703dfd8eb7783aee37bfdb3e22a278d2d546cc..fc6817ea245a365dd7058579e8023d19010b6ff6 100644
 --- a/src/main/claude/claude-structured-launch-resolution.ts
 +++ b/src/main/claude/claude-structured-launch-resolution.ts
 @@ -15,7 +15,11 @@ import {
@@ -6633,7 +6639,7 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
  import {
    CLAUDE_AUTH_SWITCH_SETTLE_TIMEOUT_MS,
    whenClaudeAuthSwitchSettles
-@@ -94,6 +98,9 @@ export type ClaudeStructuredLaunch = {
+@@ -95,6 +99,9 @@ export type ClaudeStructuredLaunch = {
    cwd: string
    env?: Record<string, string>
    claudeConfigDir: string
@@ -6643,7 +6649,7 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
    providerSessionId: string
    /** The previous head leaf, carried into the publication link; never a resume argument. */
    resumeLeafUuid: string | null
-@@ -118,14 +125,23 @@ export type ClaudeStructuredLaunchResolverDeps = {
+@@ -119,14 +126,23 @@ export type ClaudeStructuredLaunchResolverDeps = {
     * Required, and deliberately not defaulted. `stripAuthEnv` used to be a literal
     * `true` here, so a missing dependency could not under-strip. Now it can, and the
     * failure is silent — so every caller states the account's policy rather than
@@ -6670,7 +6676,7 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
    readManagedAccountGate?: () => ClaudeManagedAccountGateSettings | null
    /** Whether Claude wrote a transcript for this id; defaults to the transcript resolver. */
    hasTranscript?: (input: {
-@@ -152,16 +168,22 @@ export type ClaudeStructuredInvocation = { command: string; env: Record<string,
+@@ -153,16 +169,22 @@ export type ClaudeStructuredInvocation = { command: string; env: Record<string,
   * on it, so a probe can never list under a different binary or env than the
   * session it stands in for. Env VALUES stay out of the catalog fingerprint:
   * drift there heals on the next refresh.
@@ -6694,32 +6700,31 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
    const overlay = await deps.resolveEnv?.()
    const inheritedEnv = deps.resolveInheritedEnv
      ? await deps.resolveInheritedEnv()
-@@ -244,17 +266,6 @@ export function createClaudeStructuredLaunchResolver(
+@@ -249,17 +271,6 @@ export function createClaudeStructuredLaunchResolver(
      if (record.accountHome.variable !== 'CLAUDE_CONFIG_DIR') {
        throw new Error(`claude sessions pin CLAUDE_CONFIG_DIR, not ${record.accountHome.variable}`)
      }
 -    // Every acquisition, not just the first: the account state can change under a live session, and
 -    // a reacquire after an unexpected exit would otherwise spawn under whatever it has become.
 -    // Codex has no gate here — it resolves its account on a different path.
--    if (
--      deps.readManagedAccountGate &&
--      !structuredClaudeMatchesActiveManagedAccount(deps.readManagedAccountGate())
--    ) {
+-    const gate = deps.readManagedAccountGate?.()
+-    if (gate !== undefined && !structuredClaudeMatchesActiveManagedAccount(gate)) {
+-      // Unreadable account state names no situation a person can act on, so only the log reads it.
 -      throw new AgentSessionPreSpawnError(
--        'structured Claude is not offered under the active managed Claude account'
+-        'structured Claude is not offered under the active managed Claude account',
+-        gate && hasWslBoundClaudeAccount(gate) ? { reason: 'managedAccountUnsupported' } : {}
 -      )
 -    }
      const head = agentSessionProviderHandleChainHead(record.providerHandleChain)
      if (
        head?.handle.provider === 'claude' &&
-@@ -282,14 +293,48 @@ export function createClaudeStructuredLaunchResolver(
+@@ -287,13 +298,47 @@ export function createClaudeStructuredLaunchResolver(
      const permission = claudeStructuredPermissionOptions(
        (await deps.resolvePermissionMode?.()) ?? 'default'
      )
 -    const { command, env } = await resolveClaudeStructuredInvocation(deps, (base) =>
--      // Only a dispatched structured worker gets the orchestration identity and the Orca CLI on
--      // PATH; an ordinary chat session's env passes through untouched.
--      structuredWorkerChildIdentityEnv(record.sessionId, {
+-      // Every structured session speaks orchestration as itself: its injected id and the Orca CLI.
+-      structuredSessionChildIdentityEnv(record.sessionId, {
 -        ...base,
 -        // The turn translator relies on Claude's authoritative idle frame when no result arrives.
 -        [CLAUDE_SESSION_STATE_EVENTS_ENV]: '1'
@@ -6746,22 +6751,21 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
 +    // account-dir launch holds that account's own credentials, so refusing it would
 +    // strand a session that is already honestly attributed. Creating a session under a
 +    // WSL selection is still refused, upstream, by the create-support gate.
-+    if (
-+      deps.readManagedAccountGate &&
-+      authBinding.binding.route !== 'account-dir' &&
-+      !structuredClaudeMatchesActiveManagedAccount(deps.readManagedAccountGate())
-+    ) {
++    const gate =
++      authBinding.binding.route !== 'account-dir' ? deps.readManagedAccountGate?.() : undefined
++    if (gate !== undefined && !structuredClaudeMatchesActiveManagedAccount(gate)) {
++      // Unreadable account state names no situation a person can act on, so only the log reads it.
 +      throw new AgentSessionPreSpawnError(
-+        'structured Claude is not offered under the active managed Claude account'
++        'structured Claude is not offered under the active managed Claude account',
++        gate && hasWslBoundClaudeAccount(gate) ? { reason: 'managedAccountUnsupported' } : {}
 +      )
 +    }
 +    const { command, env } = await resolveClaudeStructuredInvocation(
 +      deps,
 +      { claudeConfigDir, auth },
 +      (base) =>
-+        // Only a dispatched structured worker gets the orchestration identity and the Orca CLI on
-+        // PATH; an ordinary chat session's env passes through untouched.
-+        structuredWorkerChildIdentityEnv(record.sessionId, {
++        // Every structured session speaks orchestration as itself: its injected id and the Orca CLI.
++        structuredSessionChildIdentityEnv(record.sessionId, {
 +          ...base,
 +          // The turn translator relies on Claude's authoritative idle frame when no result arrives.
 +          [CLAUDE_SESSION_STATE_EVENTS_ENV]: '1'
@@ -6769,7 +6773,7 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
      )
      return {
        pathToClaudeCodeExecutable: command,
-@@ -302,7 +347,8 @@ export function createClaudeStructuredLaunchResolver(
+@@ -306,7 +351,8 @@ export function createClaudeStructuredLaunchResolver(
        },
        cwd: await deps.resolveWorkspacePath(record.location.workspaceId),
        env,
@@ -6779,7 +6783,7 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
        providerSessionId,
        resumeLeafUuid:
          resumesTranscript && head?.handle.provider === 'claude' ? head.handle.leafUuid : null,
-@@ -311,3 +357,19 @@ export function createClaudeStructuredLaunchResolver(
+@@ -315,3 +361,19 @@ export function createClaudeStructuredLaunchResolver(
      }
    }
  }
@@ -6800,10 +6804,10 @@ index a2b3d41bbfd1e8691685d06effe38cee7efad90c..52922384a980c6b5c6be56c789ade05a
 +  }
 +}
 diff --git a/src/main/claude/claude-structured-session-acquisition.ts b/src/main/claude/claude-structured-session-acquisition.ts
-index b2efed691ee935f6caa62a1796596fcfb536d952..7371b8ba2c3c003f2f8aeb464554a0faf780db34 100644
+index 404787620e958bf7f54e4414289f31ae7865c20d..1b8473c11b2bb0ff590d9480e7089307886b2799 100644
 --- a/src/main/claude/claude-structured-session-acquisition.ts
 +++ b/src/main/claude/claude-structured-session-acquisition.ts
-@@ -167,7 +167,11 @@ export async function acquireClaudeSession({
+@@ -190,7 +190,11 @@ export async function acquireClaudeSession({
                launch.claudeConfigDir,
                launch.env ? { env: launch.env } : {}
              )
@@ -6817,10 +6821,10 @@ index b2efed691ee935f6caa62a1796596fcfb536d952..7371b8ba2c3c003f2f8aeb464554a0fa
          {
            onMessage,
 diff --git a/src/main/claude/claude-structured-session-adapter.test.ts b/src/main/claude/claude-structured-session-adapter.test.ts
-index 376cac9d52f1e8cda4f45aff23d2596f394788c4..2fc9f65f066ef00d205652dca3a4bbb511321e38 100644
+index ee14b6b525a8ffee6fcb0dfbc8edf1129f48ad51..09e0a5b1ceb46b843cb6f7613bf53045f202e4db 100644
 --- a/src/main/claude/claude-structured-session-adapter.test.ts
 +++ b/src/main/claude/claude-structured-session-adapter.test.ts
-@@ -375,10 +375,12 @@ describe('ClaudeStructuredSessionAdapter.acquire', () => {
+@@ -379,10 +379,12 @@ describe('ClaudeStructuredSessionAdapter.acquire', () => {
  
      await adapter.acquire({ identity: identityFor(), fence: 7, spawnToken: 'spawn-9' })
  
@@ -6833,7 +6837,7 @@ index 376cac9d52f1e8cda4f45aff23d2596f394788c4..2fc9f65f066ef00d205652dca3a4bbb5
        [CLAUDE_SPAWN_TOKEN_ENV]: 'spawn-9'
      })
    })
-@@ -393,22 +395,36 @@ describe('ClaudeStructuredSessionAdapter.acquire', () => {
+@@ -397,22 +399,36 @@ describe('ClaudeStructuredSessionAdapter.acquire', () => {
      expect(claude.connections[0].launch.env).toEqual({ [CLAUDE_SPAWN_TOKEN_ENV]: 'spawn-9' })
    })
  
@@ -6873,10 +6877,10 @@ index 376cac9d52f1e8cda4f45aff23d2596f394788c4..2fc9f65f066ef00d205652dca3a4bbb5
      const claude = fakeClaude({ initProof: 'session-start', initUuid: 'session-start-uuid' })
      const events: ClaudeStructuredSessionEvent[] = []
 diff --git a/src/main/runtime/runtime-account-controller.ts b/src/main/runtime/runtime-account-controller.ts
-index 45d3ade97ff7bf2c4a8ce492622ae6747ffdb2f3..dad9231512024843de802bd6ea7f09c4ebbc3eaf 100644
+index c824301e5a5f7f22317e7ac1995095609f2ec71c..a5d002e7970b4a919c6b9a9fe85043c673070d24 100644
 --- a/src/main/runtime/runtime-account-controller.ts
 +++ b/src/main/runtime/runtime-account-controller.ts
-@@ -13,6 +13,7 @@ import type { CodexRateLimitResetOutcome, RateLimitState } from '../../shared/ra
+@@ -17,6 +17,7 @@ import type { CodexRateLimitResetOutcome, RateLimitState } from '../../shared/ra
  import type { CodexResetCreditExpectedScope } from '../../shared/codex-reset-credit-scope'
  import type { CommitMessageAgentEnvironmentResolvers } from '../text-generation/commit-message-agent-environment'
  import type { ClaudeAccountSelectionTarget } from '../claude-accounts/runtime-selection'
@@ -6884,7 +6888,7 @@ index 45d3ade97ff7bf2c4a8ce492622ae6747ffdb2f3..dad9231512024843de802bd6ea7f09c4
  
  export type RuntimeAccountServices = {
    claudeAccounts: ClaudeAccountService
-@@ -58,6 +59,12 @@ export class RuntimeAccountController {
+@@ -64,6 +65,12 @@ export class RuntimeAccountController {
      return this.services?.claudeAccounts.getRuntimeConfigDir(target) ?? null
    }
  
@@ -6898,10 +6902,10 @@ index 45d3ade97ff7bf2c4a8ce492622ae6747ffdb2f3..dad9231512024843de802bd6ea7f09c4
      const { claudeAccounts, codexAccounts, rateLimits } = this.requireServices()
      return {
 diff --git a/src/main/runtime/structured-agent-session-runtime.ts b/src/main/runtime/structured-agent-session-runtime.ts
-index a51da3f1c3c6b2d00677ce6ce16ec708fc859166..570d74b184e6ae41396ed4f1d339aa9a9b402c69 100644
+index 3785fdeaf5ce274c1fb3428cb30617dc11a2dd94..7cdebfc5ecd221934ad8abeed8f6c558d95e4ec9 100644
 --- a/src/main/runtime/structured-agent-session-runtime.ts
 +++ b/src/main/runtime/structured-agent-session-runtime.ts
-@@ -86,8 +86,11 @@ export type StructuredAgentSessionRuntimeDeps = {
+@@ -105,8 +105,11 @@ export type StructuredAgentSessionRuntimeDeps = {
    resolveLaunchEnv?: () => Promise<NodeJS.ProcessEnv>
    resolveLaunchEnvOverlay?: () => Promise<Record<string, string>> | Record<string, string>
    resolveClaudeLaunchEnv?: () => Promise<Record<string, string>> | Record<string, string>
@@ -6915,46 +6919,8 @@ index a51da3f1c3c6b2d00677ce6ce16ec708fc859166..570d74b184e6ae41396ed4f1d339aa9a
    /** The user's Agent Permissions setting for Claude; absent means prompting. */
    resolveClaudePermissionMode?: () => Promise<PermissionMode> | PermissionMode
    /** The same setting for Codex, as app-server thread policy. */
-diff --git a/src/main/runtime/structured-claude-auth-policy-wiring.test.ts b/src/main/runtime/structured-claude-auth-policy-wiring.test.ts
-index f018dfd30da4ee8e59299d94a99c9b4606db851f..997a5f6a438e194da6849cfa14359ef9b8e6c41e 100644
---- a/src/main/runtime/structured-claude-auth-policy-wiring.test.ts
-+++ b/src/main/runtime/structured-claude-auth-policy-wiring.test.ts
-@@ -1,6 +1,5 @@
--import { readFileSync } from 'node:fs'
--import { join } from 'node:path'
- import { mkdtemp, rm } from 'node:fs/promises'
-+import { join } from 'node:path'
- import { tmpdir } from 'node:os'
- import { afterEach, describe, expect, it } from 'vitest'
- import {
-@@ -16,22 +15,11 @@ import {
-  * leave ~1000 tests green while every `ANTHROPIC_*` variable in the shell reached the
-  * child, because `stripAuthEnv` silently fell back to `false`.
-  *
-- * Two independent guards replace that silence, and this file pins both.
-+ * The guard is that the host refuses to install without one: what the policy then
-+ * means is pinned behaviourally by claude-structured-auth-policy.test.ts and
-+ * claude-structured-launch-resolution.test.ts.
-  */
- describe('structured Claude auth policy wiring', () => {
--  // The behavioural version of this assertion — importing the runtime class and
--  // capturing the installed deps — costs 35s of module transform for the whole
--  // OrcaRuntime chain (measured), so the wiring itself is pinned by source and the
--  // policy's meaning by claude-structured-auth-policy.test.ts.
--  it('passes a settings-derived Claude auth policy to the host installer', () => {
--    const source = readFileSync(join(__dirname, 'orca-runtime-get-worktree-ps.ts'), 'utf8')
--
--    expect(source).toContain('claudeStructuredAuthPolicyForSettings')
--    expect(source).toMatch(
--      /resolveClaudeAuthPolicy:\s*\(\)\s*=>\s*\n?\s*claudeStructuredAuthPolicyForSettings\(/
--    )
--  })
--
-   describe('installing without one', () => {
-     let stateDirectory: string | null = null
- 
 diff --git a/src/main/runtime/structured-claude-runtime-adapter.ts b/src/main/runtime/structured-claude-runtime-adapter.ts
-index 71854f903cd36d842a2fd77b424df80404406e1e..1b8932f9fb518276d3a1acfe230fd4c329d35112 100644
+index 9024c65b503d0014f1b63c8b991fc2f8fec429fd..1a28264a934ca3456e4ccf14dbc4dc142da258ea 100644
 --- a/src/main/runtime/structured-claude-runtime-adapter.ts
 +++ b/src/main/runtime/structured-claude-runtime-adapter.ts
 @@ -26,8 +26,11 @@ export type StructuredClaudeRuntimeAdapterDeps = {
@@ -6972,10 +6938,10 @@ index 71854f903cd36d842a2fd77b424df80404406e1e..1b8932f9fb518276d3a1acfe230fd4c3
    resolveClaudePermissionMode?: () => Promise<PermissionMode> | PermissionMode
    readClaudeManagedAccountGate?: () => ClaudeManagedAccountGateSettings | null
 diff --git a/src/main/startup/main-process-account-services.ts b/src/main/startup/main-process-account-services.ts
-index 7a677ed760ef52b61c1f0792f618ad541ac24e90..e06d5850b477759ba3c57c440edf55818e607da9 100644
+index 63f32663f7346a80d124fb1cb9b59bdf204e29e0..775348af162237b0d946a3031b412ce2e300d7d4 100644
 --- a/src/main/startup/main-process-account-services.ts
 +++ b/src/main/startup/main-process-account-services.ts
-@@ -9,15 +9,21 @@ import { createCodexSessionMigrationScheduler } from '../codex/codex-session-mig
+@@ -9,7 +9,7 @@ import { createCodexSessionMigrationScheduler } from '../codex/codex-session-mig
  import { startCodexSessionBackfillInBackground } from '../codex/codex-session-backfill'
  import { startCodexSessionIndexHealInBackground } from '../codex/codex-session-index-heal'
  import { startCodexStateDbBackfillRecoveryInBackground } from '../codex/codex-state-db-backfill-recovery'
@@ -6984,8 +6950,9 @@ index 7a677ed760ef52b61c1f0792f618ad541ac24e90..e06d5850b477759ba3c57c440edf5581
  import { getInitialCodexRateLimitTarget } from '../rate-limits/codex-rate-limit-target'
  import { getInitialClaudeRateLimitTarget } from '../rate-limits/claude-rate-limit-target'
  import { getKimiRuntimeTarget, resolveKimiHome } from '../kimi/kimi-runtime-home'
- import { readMiniMaxSessionCookie } from '../minimax/minimax-cookie-store'
- import { readMiniMaxApiKey } from '../minimax/minimax-api-key-store'
+@@ -22,8 +22,14 @@ import {
+   saveOpenCodeGoApiKey
+ } from '../opencode/opencode-go-api-key-store'
  import { createAccountRuntimeTargetSettingsSync } from '../rate-limits/account-runtime-target-sync'
 -import { normalizeCodexRuntimeSelection } from '../codex-accounts/runtime-selection'
 -import { normalizeClaudeRuntimeSelection } from '../claude-accounts/runtime-selection'
@@ -6997,10 +6964,10 @@ index 7a677ed760ef52b61c1f0792f618ad541ac24e90..e06d5850b477759ba3c57c440edf5581
 +  getSelectedClaudeAccountIdForTarget,
 +  normalizeClaudeRuntimeSelection
 +} from '../claude-accounts/runtime-selection'
- import { isAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
  import { agentHookServer } from '../agent-hooks/server'
- import { setSystemCodexHomeHookSweepSuppressed } from '../codex/hook-service'
-@@ -25,6 +31,10 @@ import { isRealHomeCodexHookLaneUsable } from '../codex/codex-real-home-hook-ins
+ import {
+   isRealHomeCodexHookLaneUsable,
+@@ -33,6 +39,10 @@ import { isAgentStatusHooksEnabledForAgent } from '../agent-hooks/managed-agent-
  import { resolveHostCodexSessionSourceHome } from '../codex/codex-session-source-home'
  import { browserManager } from '../browser/browser-manager'
  import { mainProcessState as state } from './main-process-state'
@@ -7011,7 +6978,7 @@ index 7a677ed760ef52b61c1f0792f618ad541ac24e90..e06d5850b477759ba3c57c440edf5581
  
  export function initializeMainProcessAccountServices(): void {
    const store = state.store
-@@ -163,15 +173,11 @@ export function initializeMainProcessAccountServices(): void {
+@@ -196,15 +206,11 @@ export function initializeMainProcessAccountServices(): void {
          wslLinuxAuthPath: account.wslLinuxAuthPath
        }))
    })
@@ -7031,7 +6998,7 @@ index 7a677ed760ef52b61c1f0792f618ad541ac24e90..e06d5850b477759ba3c57c440edf5581
        .filter((account) => !activeIds.has(account.id))
        .map((account) => ({
          id: account.id,
-@@ -183,5 +189,45 @@ export function initializeMainProcessAccountServices(): void {
+@@ -216,5 +222,45 @@ export function initializeMainProcessAccountServices(): void {
              : { kind: 'skip' as const }
          }
        }))

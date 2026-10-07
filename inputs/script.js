@@ -3,7 +3,7 @@
 import { copyFileSync as copyFileSync2, cpSync, existsSync as existsSync4, mkdirSync as mkdirSync3, mkdtempSync as mkdtempSync3, readdirSync as readdirSync2, readFileSync as readFileSync3, statSync as statSync2, writeFileSync as writeFileSync3 } from "fs";
 import { tmpdir as tmpdir2 } from "os";
 import { basename as basename2, join as join3, resolve as resolve5 } from "path";
-import { gunzipSync, zstdDecompressSync } from "zlib";
+import { gunzipSync as gunzipSync2, zstdDecompressSync as zstdDecompressSync2 } from "zlib";
 
 // scripts/patches/build.ts
 import { chmodSync, closeSync, copyFileSync, existsSync as existsSync3, fchmodSync, mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync2, openSync, readFileSync as readFileSync2, realpathSync as realpathSync2, rmSync as rmSync2, statSync, writeFileSync as writeFileSync2 } from "fs";
@@ -5933,10 +5933,13 @@ var packageManagerRules = {
   npx: { actions: [] },
   bunx: { actions: [] }
 };
-var leadingOptions = { bun: "--cwd=?*", pnpm: "--workspace-root|-w" };
-var leadingOption = { bun: /^--cwd=./, pnpm: /^(?:--workspace-root|-w)$/ };
+var leadingOptions = { bun: "--cwd=?*", pnpm: "--workspace-root|-w|--config.verify-deps-before-run=false|--config.verify-deps-before-run=warn|--config.verify-deps-before-run=error" };
+var leadingOption = { bun: /^--cwd=./, pnpm: /^(?:--workspace-root|-w|--config\.verify-deps-before-run=(?:false|warn|error))$/ };
 function dependencyCommandProblem(command) {
-  const args = command[1] !== undefined && leadingOption[command[0]]?.test(command[1]) ? [command[0], ...command.slice(2)] : command;
+  let leading = 1;
+  while (command[leading] !== undefined && leadingOption[command[0]]?.test(command[leading]))
+    leading++;
+  const args = [command[0], ...command.slice(leading)];
   const [manager, action] = args, rule = packageManagerRules[manager];
   if (!rule)
     return;
@@ -6097,6 +6100,149 @@ pristine comparison unavailable: ${pristine.detail}` });
   return result;
 }
 
+// scripts/patches/package-archive.ts
+import { posix } from "path";
+import { gunzipSync, zstdDecompressSync } from "zlib";
+var DATA_LIMIT = 2 * 1024 * 1024 * 1024;
+var PACKAGE = /\.(?:deb|tgz|tar\.gz)$/;
+function paxRecords(body, invalid) {
+  const records = new Map;
+  for (let offset = 0;offset < body.length; ) {
+    const space = body.indexOf(32, offset), digits = body.subarray(offset, Math.max(space, offset)).toString("latin1");
+    const length = /^[1-9]\d*$/.test(digits) ? Number(digits) : 0, end = offset + length;
+    if (!length || space >= end || end > body.length || body[end - 1] !== 10)
+      invalid("invalid pax record");
+    const record = body.subarray(space + 1, end - 1).toString("utf8"), equals = record.indexOf("=");
+    if (equals < 1)
+      invalid("invalid pax record");
+    records.set(record.slice(0, equals), record.slice(equals + 1));
+    offset = end;
+  }
+  return records;
+}
+function* tarEntries(tar, invalid) {
+  const field = (bytes, offset, length) => {
+    const slice = bytes.subarray(offset, offset + length), end = slice.indexOf(0);
+    return slice.subarray(0, end < 0 ? slice.length : end).toString("utf8");
+  };
+  const octal = (header, offset, length) => {
+    const value = field(header, offset, length).trim();
+    return /^[0-7]+$/.test(value) ? Number.parseInt(value, 8) : invalid("invalid tar number");
+  };
+  let cursor = 0, pax = new Map, longName, longLink;
+  while (cursor + 512 <= tar.length) {
+    const header = tar.subarray(cursor, cursor + 512);
+    cursor += 512;
+    if (header.every((byte) => byte === 0))
+      break;
+    if (header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0) !== octal(header, 148, 8))
+      invalid("tar checksum mismatch");
+    const size = octal(header, 124, 12), type = String.fromCharCode(header[156]);
+    if (size > tar.length - cursor)
+      invalid("truncated tar member");
+    const body = tar.subarray(cursor, cursor + size);
+    cursor += Math.ceil(size / 512) * 512;
+    if (type === "x") {
+      for (const [key, value] of paxRecords(body, invalid))
+        pax.set(key, value);
+      continue;
+    }
+    if (type === "g") {
+      if (["path", "linkpath", "size"].some((key) => paxRecords(body, invalid).has(key)))
+        invalid("global pax header names a path, link or size");
+      continue;
+    }
+    if (type === "L") {
+      longName = field(body, 0, body.length);
+      continue;
+    }
+    if (type === "K") {
+      longLink = field(body, 0, body.length);
+      continue;
+    }
+    const prefix = field(header, 257, 6) === "ustar" ? field(header, 345, 155) : "", name = field(header, 0, 100);
+    const path = (pax.get("path") ?? longName ?? (prefix ? `${prefix}/${name}` : name)).replace(/^\.\//, ""), link = (pax.get("linkpath") ?? longLink ?? field(header, 157, 100)).replace(/^\.\//, "");
+    if (pax.has("size") && pax.get("size") !== String(size))
+      invalid("pax size differs from its member header");
+    if (type === "S" || [...pax.keys()].some((key) => key.startsWith("GNU.sparse.")))
+      invalid(`${path} is a sparse member`);
+    pax = new Map;
+    longName = undefined;
+    longLink = undefined;
+    yield { path, type, mode: octal(header, 100, 8), body, link };
+  }
+}
+function decompress(bytes, name, invalid) {
+  try {
+    if (/\.(?:gz|tgz)$/.test(name))
+      return gunzipSync(bytes, { maxOutputLength: DATA_LIMIT });
+    if (name.endsWith(".zst"))
+      return zstdDecompressSync(bytes, { maxOutputLength: DATA_LIMIT });
+  } catch (error) {
+    return invalid(`${name} is not readable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (name.endsWith(".tar"))
+    return bytes;
+  return invalid(`${name} cannot be inspected in-process; package its data as gzip, zstd or uncompressed tar`);
+}
+function debData(deb, invalid) {
+  if (deb.subarray(0, 8).toString("latin1") !== `!<arch>
+`)
+    invalid("not a Debian ar archive");
+  const data = [];
+  let cursor = 8, dataName = "";
+  while (cursor < deb.length) {
+    if (cursor + 60 > deb.length)
+      invalid("truncated ar header");
+    const header = deb.subarray(cursor, cursor + 60).toString("latin1"), sizeText = header.slice(48, 58).trim();
+    if (header.slice(58, 60) !== "`\n" || !/^\d+$/.test(sizeText))
+      invalid("invalid ar header");
+    const name = header.slice(0, 16).trimEnd().replace(/\/$/, ""), size = Number(sizeText);
+    cursor += 60;
+    if (size > deb.length - cursor)
+      invalid("truncated ar member");
+    if (name.startsWith("data.tar")) {
+      data.push(deb.subarray(cursor, cursor + size));
+      dataName = name;
+    }
+    cursor += size + size % 2;
+  }
+  if (data.length !== 1)
+    invalid(`expected one data member, found ${data.length}`);
+  return decompress(data[0], dataName, invalid);
+}
+function modeProblem(name, entries) {
+  const bad = [], files = new Map;
+  const installed = (path) => posix.normalize(`/${path}`);
+  for (const entry of entries) {
+    const link = entry.type === "1", directory = entry.type === "5" || entry.type === "D" || entry.type === "\x00" && entry.path.endsWith("/");
+    const file = !directory && !["2", "3", "4", "6"].includes(entry.type);
+    const mode = link ? files.get(installed(entry.link)) : entry.mode;
+    if (mode === undefined)
+      return `${name} hard-links ${entry.path} to ${entry.link}, which it does not contain`;
+    if (file)
+      files.set(installed(entry.path), mode);
+    if (name.endsWith(".deb") && !/^\/(?:opt|usr)(?:\/|$)/.test(installed(entry.path)))
+      continue;
+    if (file && !(mode & 4) || directory && (mode & 5) !== 5 || (file || directory) && mode & 18)
+      bad.push({ path: entry.path, mode });
+  }
+  if (!bad.length)
+    return;
+  const shown = bad.slice(0, 5).map((entry) => `${entry.path || "."} (${(entry.mode & 4095).toString(8).padStart(4, "0")})`);
+  return `${name} has ${bad.length} ${bad.length === 1 ? "entry" : "entries"} other users cannot read or that are group- or other-writable: ${shown.join(", ")}${bad.length > shown.length ? `, and ${bad.length - shown.length} more` : ""}`;
+}
+function packageModeProblem(bytes, name) {
+  const invalid = (detail) => {
+    throw new Error(detail);
+  };
+  try {
+    return modeProblem(name, tarEntries(name.endsWith(".deb") ? debData(bytes, invalid) : decompress(bytes, name, invalid), invalid));
+  } catch (error) {
+    return `${name} cannot be inspected: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 // scripts/patches/build.ts
 var quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 var outside = (root, path) => {
@@ -6235,21 +6381,24 @@ function guardDependencies(root, env, installs) {
     ].join(`
 `);
     const leading = leadingOptions[manager];
-    const cwd = leading ? `cwd=
-case "$1" in ${leading}) cwd="$1"; shift;; esac
-` : "", at = leading ? ' ${cwd:+"$cwd"}' : "";
+    const judge = `judge() {
+${leading ? `while case "$1" in ${leading}) true;; *) false;; esac; do shift; done
+` : ""}action=$1
+case "$1" in
+${policy}
+esac
+` + (manager === "bun" ? `for arg in "$@"; do case "$arg" in --install|--install=*|-i) refuse;; esac; done
+` : "") + `}
+judge "$@"
+`;
     const absent = `printf '%s\\n' '${manager} is not in the declared toolchain' >&2
 exit 127
 `;
-    const guard = manager === "npx" ? target ? npxGuard(installs) : absent : `${cwd}case "$1" in
-${policy}
+    const guard = manager === "npx" ? target ? npxGuard(installs) : absent : judge + (target ? manager === "bun" ? `case "$action" in
+install|i|ci|--version|pm) exec ${quote(target)} "$@";;
 esac
-` + (target ? manager === "bun" ? `case "$1" in
-install|i|ci|--version|pm) exec ${quote(target)}${at} "$@";;
-esac
-for arg in "$@"; do case "$arg" in --install|--install=*|-i) refuse;; esac; done
-exec ${quote(target)}${at} --no-install "$@"
-` : `exec ${quote(target)}${at} "$@"
+exec ${quote(target)} --no-install "$@"
+` : `exec ${quote(target)} "$@"
 ` : absent);
     const script = `#!/bin/sh
 command=${quote(manager)}" $*"
@@ -6494,6 +6643,10 @@ async function runBuild(input) {
 pristine retry: ${retry.detail}` } : problem, provenance);
     }
     const artifacts = collect(patched);
+    const problems = artifacts.flatMap((artifact) => PACKAGE.test(artifact.path) ? packageModeProblem(readFileSync2(artifact.path), basename(artifact.path)) ?? [] : []);
+    if (problems.length)
+      return failure({ verdict: "fail", reason: "package-modes", detail: problems.join(`
+`) }, provenance);
     let gate;
     try {
       gate = await runGate({ manifest, patchedTree: patched, upstreamCommit: request.upstreamCommit, seriesDir, git: gitDeps, execute: (tree, step, network) => command(tree, step, network, true), pristine });
@@ -6566,7 +6719,7 @@ async function installMise(lock, directory) {
   const archive = Buffer.from(await response.arrayBuffer());
   if (`sha256:${sha256(archive)}` !== pinned.checksum)
     throw new Error("unverified/snapshot-mismatch: the mise download differs from mise.lock");
-  const tar = pinned.url.endsWith(".tar.zst") ? zstdDecompressSync(archive) : pinned.url.endsWith(".tar.gz") ? gunzipSync(archive) : undefined;
+  const tar = pinned.url.endsWith(".tar.zst") ? zstdDecompressSync2(archive) : pinned.url.endsWith(".tar.gz") ? gunzipSync2(archive) : undefined;
   if (!tar)
     throw new Error(`unverified/build-wrapper: unsupported mise archive ${basename2(pinned.url)}`);
   mkdirSync3(directory, { recursive: true });

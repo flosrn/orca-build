@@ -3,7 +3,7 @@ From: HarnessOS <patches@harnessos.invalid>
 Date: Sat, 1 Jan 2000 00:00:00 +0000
 Subject: read CodexBar provider usage
 
-Carried-Because: Preserve the deployed Orca fork concern on v1.4.215.
+Carried-Because: Preserve the deployed Orca fork concern on v1.4.222.
 Tests: Declared unit and integration gates in components/orca/build.toml.
 
 diff --git a/src/main/rate-limits/codexbar-cli-source.test.ts b/src/main/rate-limits/codexbar-cli-source.test.ts
